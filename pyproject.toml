@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pvault"
+version = "0.1.0"
+description = "Personal Vault Finance Controller - Secure financial record management"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "cryptography>=42.0.0",
+]
+
+[project.scripts]
+pvault = "pvault.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
