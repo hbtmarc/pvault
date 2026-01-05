@@ -44,6 +44,16 @@ def test_add_record_with_tags(controller):
     assert record.tags == ["food", "essential"]
 
 
+def test_add_record_invalid_category(controller):
+    """Test adding a record with invalid category."""
+    with pytest.raises(ValueError, match="Category must be 'income' or 'expense'"):
+        controller.add_record(
+            category="invalid",
+            amount=Decimal("100.00"),
+            description="Test"
+        )
+
+
 def test_get_record(controller):
     """Test getting a record by ID."""
     added_record = controller.add_record(

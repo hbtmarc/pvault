@@ -94,16 +94,18 @@ class CLI:
             return
         
         tags_input = input("Tags (comma-separated, optional): ").strip()
-        tags = [t.strip() for t in tags_input.split(",")] if tags_input else []
+        tags = [t.strip() for t in tags_input.split(",") if t.strip()] if tags_input else []
         
-        record = self.controller.add_record(
-            category=category,
-            amount=amount,
-            description=description,
-            tags=tags
-        )
-        
-        print(f"Record added with ID: {record.record_id}")
+        try:
+            record = self.controller.add_record(
+                category=category,
+                amount=amount,
+                description=description,
+                tags=tags
+            )
+            print(f"Record added with ID: {record.record_id}")
+        except ValueError as e:
+            print(f"Error: {e}")
 
     def list_records(self):
         """List financial records."""

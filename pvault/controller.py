@@ -49,7 +49,7 @@ class FinanceController:
         """Add a new financial record.
         
         Args:
-            category: Category of the record (e.g., 'income', 'expense')
+            category: Category of the record (must be 'income' or 'expense')
             amount: Amount of money
             description: Description of the transaction
             date: Date of transaction (defaults to now)
@@ -57,7 +57,13 @@ class FinanceController:
             
         Returns:
             The created FinancialRecord
+            
+        Raises:
+            ValueError: If category is not 'income' or 'expense'
         """
+        if category not in ('income', 'expense'):
+            raise ValueError("Category must be 'income' or 'expense'")
+        
         if date is None:
             date = datetime.now()
         
