@@ -1,7 +1,8 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import AppShell from "../components/AppShell";
 import Button from "../components/Button";
 import Card from "../components/Card";
+import ErrorBanner from "../components/ErrorBanner";
 import MonthSelector from "../components/MonthSelector";
 import TransactionFormModal, {
   type TransactionDraft,
@@ -9,8 +10,10 @@ import TransactionFormModal, {
 import { getMonthKey } from "../lib/date";
 import {
   type Category,
+  type FirestoreErrorInfo,
   type Transaction,
   createTransaction,
+  getFirestoreErrorInfo,
   getFirestoreErrorMessage,
   listCategories,
   listTransactionsByMonth,
@@ -26,7 +29,7 @@ const HomePage = () => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<FirestoreErrorInfo | null>(null);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Transaction | null>(null);
@@ -42,7 +45,7 @@ const HomePage = () => {
       user.uid,
       false,
       (items) => setCategories(items),
-      (err) => setError(getFirestoreErrorMessage(err))
+      (err) => setError(getFirestoreErrorInfo(err))
     );
 
     return () => unsubscribe();
@@ -63,7 +66,7 @@ const HomePage = () => {
         setLoading(false);
       },
       (err) => {
-        setError(getFirestoreErrorMessage(err));
+        setError(getFirestoreErrorInfo(err));
         setLoading(false);
       }
     );
@@ -151,7 +154,7 @@ const HomePage = () => {
     try {
       await removeTransaction(user.uid, transaction.id);
     } catch (err) {
-      setError(getFirestoreErrorMessage(err));
+      setError(getFirestoreErrorInfo(err));
     }
   };
 
@@ -162,11 +165,7 @@ const HomePage = () => {
         <Button onClick={openCreateModal}>+ Novo lancamento</Button>
       </div>
 
-      {error ? (
-        <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">
-          {error}
-        </div>
-      ) : null}
+      <ErrorBanner info={error} className="mt-4" />
 
       <div className="mt-6 grid gap-4 md:grid-cols-3">
         <Card>

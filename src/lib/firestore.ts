@@ -1,4 +1,4 @@
-﻿import { FirebaseError } from "firebase/app";
+import { FirebaseError } from "firebase/app";
 import {
   addDoc,
   collection,
@@ -33,6 +33,13 @@ export type Transaction = {
   description?: string;
 };
 
+export type FirestoreErrorInfo = {
+  message: string;
+  code?: string;
+  details?: string;
+  isIndexError?: boolean;
+};
+
 type CategoryInput = {
   name: string;
   type: Direction;
@@ -53,12 +60,29 @@ const categoriesCollection = (uid: string) =>
 const transactionsCollection = (uid: string) =>
   collection(db, "users", uid, "transactions");
 
+const ensureUid = (uid: string) => {
+  if (!uid) {
+    throw new Error("Missing uid");
+  }
+};
+
+const logDev = (message: string, details: Record<string, unknown>) => {
+  if (import.meta.env.DEV) {
+    console.debug(message, details);
+  }
+};
+
 export const listCategories = (
   uid: string,
   archived: boolean,
   onChange: (items: Category[]) => void,
-  onError?: (error: Error) => void
+  onError?: (error: unknown) => void
 ) => {
+  ensureUid(uid);
+  const path = `users/${uid}/categories`;
+
+  logDev("[firestore] listCategories", { uid, path, archived });
+
   const categoriesQuery = query(
     categoriesCollection(uid),
     where("archived", "==", archived),
@@ -82,11 +106,16 @@ export const listCategories = (
 
       onChange(items);
     },
-    onError
+    (error) => {
+      console.error("[firestore] listCategories", { uid, path, archived, error });
+      onError?.(error);
+    }
   );
 };
 
 export const createCategory = async (uid: string, data: CategoryInput) => {
+  ensureUid(uid);
+  const path = `users/${uid}/categories`;
   const payload = {
     name: data.name.trim(),
     type: data.type,
@@ -96,7 +125,12 @@ export const createCategory = async (uid: string, data: CategoryInput) => {
     updatedAt: serverTimestamp(),
   };
 
-  return addDoc(categoriesCollection(uid), payload);
+  try {
+    return await addDoc(categoriesCollection(uid), payload);
+  } catch (error) {
+    console.error("[firestore] createCategory", { uid, path, error });
+    throw error;
+  }
 };
 
 export const updateCategory = async (
@@ -104,6 +138,8 @@ export const updateCategory = async (
   categoryId: string,
   data: CategoryInput
 ) => {
+  ensureUid(uid);
+  const path = `users/${uid}/categories/${categoryId}`;
   const payload = {
     name: data.name.trim(),
     type: data.type,
@@ -111,25 +147,44 @@ export const updateCategory = async (
     updatedAt: serverTimestamp(),
   };
 
-  return updateDoc(doc(categoriesCollection(uid), categoryId), payload);
+  try {
+    return await updateDoc(doc(categoriesCollection(uid), categoryId), payload);
+  } catch (error) {
+    console.error("[firestore] updateCategory", { uid, path, error });
+    throw error;
+  }
 };
 
 export const archiveCategory = async (
   uid: string,
   categoryId: string,
   archived: boolean
-) =>
-  updateDoc(doc(categoriesCollection(uid), categoryId), {
-    archived,
-    updatedAt: serverTimestamp(),
-  });
+) => {
+  ensureUid(uid);
+  const path = `users/${uid}/categories/${categoryId}`;
+
+  try {
+    return await updateDoc(doc(categoriesCollection(uid), categoryId), {
+      archived,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    console.error("[firestore] archiveCategory", { uid, path, archived, error });
+    throw error;
+  }
+};
 
 export const listTransactionsByMonth = (
   uid: string,
   monthKey: string,
   onChange: (items: Transaction[]) => void,
-  onError?: (error: Error) => void
+  onError?: (error: unknown) => void
 ) => {
+  ensureUid(uid);
+  const path = `users/${uid}/transactions`;
+
+  logDev("[firestore] listTransactionsByMonth", { uid, path, monthKey });
+
   const transactionsQuery = query(
     transactionsCollection(uid),
     where("monthKey", "==", monthKey),
@@ -154,11 +209,21 @@ export const listTransactionsByMonth = (
 
       onChange(items);
     },
-    onError
+    (error) => {
+      console.error("[firestore] listTransactionsByMonth", {
+        uid,
+        path,
+        monthKey,
+        error,
+      });
+      onError?.(error);
+    }
   );
 };
 
 export const createTransaction = async (uid: string, data: TransactionInput) => {
+  ensureUid(uid);
+  const path = `users/${uid}/transactions`;
   const payload = {
     direction: data.direction,
     amountCents: data.amountCents,
@@ -170,7 +235,12 @@ export const createTransaction = async (uid: string, data: TransactionInput) => 
     updatedAt: serverTimestamp(),
   };
 
-  return addDoc(transactionsCollection(uid), payload);
+  try {
+    return await addDoc(transactionsCollection(uid), payload);
+  } catch (error) {
+    console.error("[firestore] createTransaction", { uid, path, error });
+    throw error;
+  }
 };
 
 export const updateTransaction = async (
@@ -178,6 +248,8 @@ export const updateTransaction = async (
   transactionId: string,
   data: TransactionInput
 ) => {
+  ensureUid(uid);
+  const path = `users/${uid}/transactions/${transactionId}`;
   const payload = {
     direction: data.direction,
     amountCents: data.amountCents,
@@ -188,25 +260,80 @@ export const updateTransaction = async (
     updatedAt: serverTimestamp(),
   };
 
-  return updateDoc(doc(transactionsCollection(uid), transactionId), payload);
+  try {
+    return await updateDoc(
+      doc(transactionsCollection(uid), transactionId),
+      payload
+    );
+  } catch (error) {
+    console.error("[firestore] updateTransaction", { uid, path, error });
+    throw error;
+  }
 };
 
-export const removeTransaction = (uid: string, transactionId: string) =>
-  deleteDoc(doc(transactionsCollection(uid), transactionId));
+export const removeTransaction = async (uid: string, transactionId: string) => {
+  ensureUid(uid);
+  const path = `users/${uid}/transactions/${transactionId}`;
 
-export const getFirestoreErrorMessage = (error: unknown) => {
+  try {
+    return await deleteDoc(doc(transactionsCollection(uid), transactionId));
+  } catch (error) {
+    console.error("[firestore] removeTransaction", { uid, path, error });
+    throw error;
+  }
+};
+
+const isIndexError = (error: FirebaseError) => {
+  const code = error.code.toLowerCase();
+  const message = error.message.toLowerCase();
+  return code === "failed-precondition" || message.includes("index");
+};
+
+export const getFirestoreErrorInfo = (error: unknown): FirestoreErrorInfo => {
   if (!(error instanceof FirebaseError)) {
-    return "Ocorreu um erro inesperado. Tente novamente.";
+    return {
+      message: "Ocorreu um erro inesperado. Tente novamente.",
+    };
+  }
+
+  const indexError = isIndexError(error);
+  if (indexError) {
+    return {
+      message:
+        "Indice necessario para essa consulta. Atualize firestore.indexes.json e rode: firebase deploy --only firestore:indexes",
+      code: error.code,
+      details: error.message,
+      isIndexError: true,
+    };
   }
 
   switch (error.code) {
     case "permission-denied":
-      return "Permissao negada. Verifique se voce esta autenticado.";
+      return {
+        message: "Permissao negada. Verifique se voce esta autenticado.",
+        code: error.code,
+        details: error.message,
+      };
     case "unavailable":
-      return "Servico indisponivel. Tente novamente em instantes.";
+      return {
+        message: "Servico indisponivel. Tente novamente em instantes.",
+        code: error.code,
+        details: error.message,
+      };
     case "not-found":
-      return "Documento nao encontrado.";
+      return {
+        message: "Documento nao encontrado.",
+        code: error.code,
+        details: error.message,
+      };
     default:
-      return "Nao foi possivel concluir a acao. Tente novamente.";
+      return {
+        message: "Nao foi possivel concluir a acao. Tente novamente.",
+        code: error.code,
+        details: error.message,
+      };
   }
 };
+
+export const getFirestoreErrorMessage = (error: unknown) =>
+  getFirestoreErrorInfo(error).message;

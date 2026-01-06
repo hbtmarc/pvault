@@ -1,13 +1,16 @@
-﻿import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import AppShell from "../components/AppShell";
 import Button from "../components/Button";
 import Card from "../components/Card";
+import ErrorBanner from "../components/ErrorBanner";
 import Input from "../components/Input";
 import {
   type Category,
   type Direction,
+  type FirestoreErrorInfo,
   archiveCategory,
   createCategory,
+  getFirestoreErrorInfo,
   getFirestoreErrorMessage,
   listCategories,
   updateCategory,
@@ -24,7 +27,7 @@ const CategoriesPage = () => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [archivedCategories, setArchivedCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<FirestoreErrorInfo | null>(null);
 
   const [name, setName] = useState("");
   const [type, setType] = useState<Direction>("expense");
@@ -52,7 +55,7 @@ const CategoriesPage = () => {
         setLoading(false);
       },
       (err) => {
-        setError(getFirestoreErrorMessage(err));
+        setError(getFirestoreErrorInfo(err));
         setLoading(false);
       }
     );
@@ -64,7 +67,7 @@ const CategoriesPage = () => {
         setArchivedCategories(items);
       },
       (err) => {
-        setError(getFirestoreErrorMessage(err));
+        setError(getFirestoreErrorInfo(err));
       }
     );
 
@@ -145,7 +148,7 @@ const CategoriesPage = () => {
     try {
       await archiveCategory(user.uid, categoryId, archived);
     } catch (err) {
-      setError(getFirestoreErrorMessage(err));
+      setError(getFirestoreErrorInfo(err));
     }
   };
 
@@ -196,11 +199,7 @@ const CategoriesPage = () => {
             Edite ou arquive quando nao usar mais.
           </p>
 
-          {error ? (
-            <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">
-              {error}
-            </div>
-          ) : null}
+          <ErrorBanner info={error} className="mt-4" />
 
           {loading ? (
             <p className="mt-4 text-sm text-slate-500">Carregando...</p>
@@ -292,9 +291,7 @@ const CategoriesPage = () => {
 
       <Card className="mt-6">
         <h2 className="text-lg font-semibold text-slate-900">Arquivadas</h2>
-        <p className="text-sm text-slate-500">
-          Reative quando precisar.
-        </p>
+        <p className="text-sm text-slate-500">Reative quando precisar.</p>
 
         {archivedCategories.length === 0 ? (
           <p className="mt-4 text-sm text-slate-500">Nenhuma categoria arquivada.</p>
