@@ -1,4 +1,4 @@
-﻿const currencyFormatter = new Intl.NumberFormat("pt-BR", {
+const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
   currency: "BRL",
 });
@@ -44,3 +44,8 @@ export const parseAmountToCents = (raw: string) => {
 
   return Math.round(amount * 100);
 };
+
+export const parseBRLToCents = (raw: string) => parseAmountToCents(raw);
+
+export const formatCentsToBRL = (amountCents: number) =>
+  formatCurrency(amountCents);

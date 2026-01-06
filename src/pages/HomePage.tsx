@@ -9,13 +9,19 @@ import TransactionFormModal, {
 } from "../components/TransactionFormModal";
 import { getMonthKey } from "../lib/date";
 import {
+  type Budget,
   type Category,
   type FirestoreErrorInfo,
+  type PlannedItem,
+  type RecurringRule,
   type Transaction,
+  buildPlannedItems,
   createTransaction,
   getFirestoreErrorInfo,
   getFirestoreErrorMessage,
+  listBudgetsByMonth,
   listCategories,
+  listRecurringRules,
   listTransactionsByMonth,
   removeTransaction,
   updateTransaction,
@@ -28,6 +34,8 @@ const HomePage = () => {
   const [monthKey, setMonthKey] = useState(getMonthKey(new Date()));
   const [categories, setCategories] = useState<Category[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [rules, setRules] = useState<RecurringRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FirestoreErrorInfo | null>(null);
 
@@ -35,6 +43,8 @@ const HomePage = () => {
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [saving, setSaving] = useState(false);
   const [modalError, setModalError] = useState("");
+  const [showPlanned, setShowPlanned] = useState(true);
+  const [payingId, setPayingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) {
@@ -74,6 +84,35 @@ const HomePage = () => {
     return () => unsubscribe();
   }, [user, monthKey]);
 
+  useEffect(() => {
+    if (!user) {
+      return undefined;
+    }
+
+    const unsubscribe = listBudgetsByMonth(
+      user.uid,
+      monthKey,
+      (items) => setBudgets(items),
+      (err) => setError(getFirestoreErrorInfo(err))
+    );
+
+    return () => unsubscribe();
+  }, [user, monthKey]);
+
+  useEffect(() => {
+    if (!user) {
+      return undefined;
+    }
+
+    const unsubscribe = listRecurringRules(
+      user.uid,
+      (items) => setRules(items),
+      (err) => setError(getFirestoreErrorInfo(err))
+    );
+
+    return () => unsubscribe();
+  }, [user]);
+
   const totals = useMemo(() => {
     return transactions.reduce(
       (acc, transaction) => {
@@ -88,7 +127,12 @@ const HomePage = () => {
     );
   }, [transactions]);
 
-  const balance = totals.income - totals.expense;
+  const totalAllocated = useMemo(
+    () => budgets.reduce((sum, budget) => sum + budget.allocatedCents, 0),
+    [budgets]
+  );
+
+  const available = totals.income - totalAllocated;
 
   const categoriesById = useMemo(() => {
     const map = new Map<string, Category>();
@@ -97,6 +141,11 @@ const HomePage = () => {
     });
     return map;
   }, [categories]);
+
+  const plannedItems = useMemo<PlannedItem[]>(
+    () => buildPlannedItems(monthKey, rules, transactions),
+    [monthKey, rules, transactions]
+  );
 
   const openCreateModal = () => {
     setEditing(null);
@@ -158,6 +207,30 @@ const HomePage = () => {
     }
   };
 
+  const handleMarkAsPaid = async (item: PlannedItem) => {
+    if (!user) {
+      return;
+    }
+
+    try {
+      setPayingId(item.id);
+      await createTransaction(user.uid, {
+        direction: item.direction,
+        amountCents: item.amountCents,
+        date: item.plannedDate,
+        categoryId: item.categoryId,
+        description: item.name,
+        sourceType: "recurring",
+        sourceRuleId: item.ruleId,
+        plannedDate: item.plannedDate,
+      });
+    } catch (err) {
+      setError(getFirestoreErrorInfo(err));
+    } finally {
+      setPayingId(null);
+    }
+  };
+
   return (
     <AppShell title="Dashboard" subtitle="Resumo mensal">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -167,7 +240,7 @@ const HomePage = () => {
 
       <ErrorBanner info={error} className="mt-4" />
 
-      <div className="mt-6 grid gap-4 md:grid-cols-3">
+      <div className="mt-6 grid gap-4 md:grid-cols-4">
         <Card>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-600">
             Receita
@@ -189,10 +262,95 @@ const HomePage = () => {
             Saldo
           </p>
           <p className="mt-2 text-2xl font-bold text-slate-900">
-            {formatCurrency(balance)}
+            {formatCurrency(totals.income - totals.expense)}
+          </p>
+        </Card>
+        <Card>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-600">
+            Disponivel
+          </p>
+          <p className="mt-2 text-2xl font-bold text-slate-900">
+            {formatCurrency(available)}
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            Total alocado: {formatCurrency(totalAllocated)}
           </p>
         </Card>
       </div>
+
+      <Card className="mt-6">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Previstos</h2>
+            <p className="text-sm text-slate-500">
+              Recorrencias previstas para o mes selecionado.
+            </p>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            <input
+              type="checkbox"
+              checked={showPlanned}
+              onChange={(event) => setShowPlanned(event.target.checked)}
+            />
+            Mostrar previstos
+          </label>
+        </div>
+
+        {!showPlanned ? (
+          <p className="mt-4 text-sm text-slate-500">Previstos ocultos.</p>
+        ) : null}
+
+        {showPlanned && plannedItems.length === 0 ? (
+          <p className="mt-4 text-sm text-slate-500">Nenhum previsto neste mes.</p>
+        ) : null}
+
+        {showPlanned ? (
+          <div className="mt-4 space-y-3">
+            {plannedItems.map((item) => {
+              const badgeStyles =
+                item.direction === "income"
+                  ? "bg-emerald-100 text-emerald-700"
+                  : "bg-rose-100 text-rose-700";
+
+              return (
+                <div
+                  key={item.id}
+                  className="flex flex-col gap-3 rounded-xl border border-slate-100 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-slate-200 px-2 py-1 text-xs text-slate-700">
+                        Previsto
+                      </span>
+                      <span className={`rounded-full px-2 py-1 text-xs ${badgeStyles}`}>
+                        {item.direction === "income" ? "Receita" : "Despesa"}
+                      </span>
+                      <span className="text-xs text-slate-500">{item.plannedDate}</span>
+                    </div>
+                    <p className="text-sm font-semibold text-slate-900">{item.name}</p>
+                    <p className="text-xs text-slate-500">
+                      {categoriesById.get(item.categoryId)?.name ??
+                        "Categoria removida"}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-900">
+                      {formatCurrency(item.amountCents)}
+                    </span>
+                    <Button
+                      variant="secondary"
+                      onClick={() => handleMarkAsPaid(item)}
+                      loading={payingId === item.id}
+                    >
+                      Marcar como pago
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </Card>
 
       <Card className="mt-6">
         <div className="flex items-center justify-between">
@@ -232,6 +390,11 @@ const HomePage = () => {
                     <span className={`rounded-full px-2 py-1 text-xs ${badgeStyles}`}>
                       {transaction.direction === "income" ? "Receita" : "Despesa"}
                     </span>
+                    {transaction.sourceType === "recurring" ? (
+                      <span className="rounded-full bg-slate-200 px-2 py-1 text-xs text-slate-700">
+                        Recorrente
+                      </span>
+                    ) : null}
                     <span className="text-xs text-slate-500">{transaction.date}</span>
                   </div>
                   <p className="text-sm font-semibold text-slate-900">

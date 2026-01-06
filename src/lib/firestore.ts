@@ -3,17 +3,22 @@ import {
   addDoc,
   collection,
   deleteDoc,
+  deleteField,
   doc,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
   where,
 } from "firebase/firestore";
+import { lastDayOfMonth } from "./date";
 import { db } from "./firebase";
 
 export type Direction = "income" | "expense";
+
+export type TransactionSourceType = "manual" | "recurring";
 
 export type Category = {
   id: string;
@@ -31,6 +36,39 @@ export type Transaction = {
   monthKey: string;
   categoryId: string;
   description?: string;
+  sourceType?: TransactionSourceType;
+  sourceRuleId?: string;
+  plannedDate?: string;
+};
+
+export type Budget = {
+  id: string;
+  monthKey: string;
+  categoryId: string;
+  allocatedCents: number;
+};
+
+export type RecurringRule = {
+  id: string;
+  name: string;
+  direction: Direction;
+  amountCents: number;
+  categoryId: string;
+  dayOfMonth: number;
+  startMonthKey: string;
+  endMonthKey?: string;
+  active: boolean;
+};
+
+export type PlannedItem = {
+  id: string;
+  ruleId: string;
+  name: string;
+  direction: Direction;
+  amountCents: number;
+  categoryId: string;
+  monthKey: string;
+  plannedDate: string;
 };
 
 export type FirestoreErrorInfo = {
@@ -52,6 +90,20 @@ type TransactionInput = {
   date: string;
   categoryId: string;
   description?: string;
+  sourceType?: TransactionSourceType;
+  sourceRuleId?: string;
+  plannedDate?: string;
+};
+
+type RecurringRuleInput = {
+  name: string;
+  direction: Direction;
+  amountCents: number;
+  categoryId: string;
+  dayOfMonth: number;
+  startMonthKey: string;
+  endMonthKey?: string;
+  active?: boolean;
 };
 
 const categoriesCollection = (uid: string) =>
@@ -59,6 +111,11 @@ const categoriesCollection = (uid: string) =>
 
 const transactionsCollection = (uid: string) =>
   collection(db, "users", uid, "transactions");
+
+const budgetsCollection = (uid: string) => collection(db, "users", uid, "budgets");
+
+const recurringRulesCollection = (uid: string) =>
+  collection(db, "users", uid, "recurringRules");
 
 const ensureUid = (uid: string) => {
   if (!uid) {
@@ -204,6 +261,9 @@ export const listTransactionsByMonth = (
           monthKey: (data.monthKey as string) ?? "",
           categoryId: (data.categoryId as string) ?? "",
           description: (data.description as string) ?? "",
+          sourceType: data.sourceType as TransactionSourceType | undefined,
+          sourceRuleId: (data.sourceRuleId as string) ?? undefined,
+          plannedDate: (data.plannedDate as string) ?? undefined,
         };
       });
 
@@ -224,7 +284,7 @@ export const listTransactionsByMonth = (
 export const createTransaction = async (uid: string, data: TransactionInput) => {
   ensureUid(uid);
   const path = `users/${uid}/transactions`;
-  const payload = {
+  const payload: Record<string, unknown> = {
     direction: data.direction,
     amountCents: data.amountCents,
     date: data.date,
@@ -234,6 +294,16 @@ export const createTransaction = async (uid: string, data: TransactionInput) => 
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
+
+  if (data.sourceType) {
+    payload.sourceType = data.sourceType;
+  }
+  if (data.sourceRuleId) {
+    payload.sourceRuleId = data.sourceRuleId;
+  }
+  if (data.plannedDate) {
+    payload.plannedDate = data.plannedDate;
+  }
 
   try {
     return await addDoc(transactionsCollection(uid), payload);
@@ -250,7 +320,7 @@ export const updateTransaction = async (
 ) => {
   ensureUid(uid);
   const path = `users/${uid}/transactions/${transactionId}`;
-  const payload = {
+  const payload: Record<string, unknown> = {
     direction: data.direction,
     amountCents: data.amountCents,
     date: data.date,
@@ -259,6 +329,16 @@ export const updateTransaction = async (
     description: data.description?.trim() || "",
     updatedAt: serverTimestamp(),
   };
+
+  if (data.sourceType) {
+    payload.sourceType = data.sourceType;
+  }
+  if (data.sourceRuleId) {
+    payload.sourceRuleId = data.sourceRuleId;
+  }
+  if (data.plannedDate) {
+    payload.plannedDate = data.plannedDate;
+  }
 
   try {
     return await updateDoc(
@@ -279,6 +359,203 @@ export const removeTransaction = async (uid: string, transactionId: string) => {
     return await deleteDoc(doc(transactionsCollection(uid), transactionId));
   } catch (error) {
     console.error("[firestore] removeTransaction", { uid, path, error });
+    throw error;
+  }
+};
+
+export const listBudgetsByMonth = (
+  uid: string,
+  monthKey: string,
+  onChange: (items: Budget[]) => void,
+  onError?: (error: unknown) => void
+) => {
+  ensureUid(uid);
+  const path = `users/${uid}/budgets`;
+
+  logDev("[firestore] listBudgetsByMonth", { uid, path, monthKey });
+
+  const budgetsQuery = query(
+    budgetsCollection(uid),
+    where("monthKey", "==", monthKey)
+  );
+
+  return onSnapshot(
+    budgetsQuery,
+    (snapshot) => {
+      const items = snapshot.docs.map((item) => {
+        const data = item.data();
+        return {
+          id: item.id,
+          monthKey: (data.monthKey as string) ?? monthKey,
+          categoryId: (data.categoryId as string) ?? "",
+          allocatedCents: (data.allocatedCents as number) ?? 0,
+        };
+      });
+
+      onChange(items);
+    },
+    (error) => {
+      console.error("[firestore] listBudgetsByMonth", { uid, path, monthKey, error });
+      onError?.(error);
+    }
+  );
+};
+
+export const upsertBudget = async (
+  uid: string,
+  monthKey: string,
+  categoryId: string,
+  allocatedCents: number
+) => {
+  ensureUid(uid);
+  const budgetId = `${monthKey}_${categoryId}`;
+  const path = `users/${uid}/budgets/${budgetId}`;
+  const payload = {
+    monthKey,
+    categoryId,
+    allocatedCents,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+
+  try {
+    return await setDoc(doc(budgetsCollection(uid), budgetId), payload, {
+      merge: true,
+    });
+  } catch (error) {
+    console.error("[firestore] upsertBudget", {
+      uid,
+      path,
+      monthKey,
+      categoryId,
+      allocatedCents,
+      error,
+    });
+    throw error;
+  }
+};
+
+export const listRecurringRules = (
+  uid: string,
+  onChange: (items: RecurringRule[]) => void,
+  onError?: (error: unknown) => void
+) => {
+  ensureUid(uid);
+  const path = `users/${uid}/recurringRules`;
+
+  logDev("[firestore] listRecurringRules", { uid, path });
+
+  const rulesQuery = query(recurringRulesCollection(uid), orderBy("name", "asc"));
+
+  return onSnapshot(
+    rulesQuery,
+    (snapshot) => {
+      const items = snapshot.docs.map((item) => {
+        const data = item.data();
+        return {
+          id: item.id,
+          name: (data.name as string) ?? "",
+          direction: (data.direction as Direction) ?? "expense",
+          amountCents: (data.amountCents as number) ?? 0,
+          categoryId: (data.categoryId as string) ?? "",
+          dayOfMonth: (data.dayOfMonth as number) ?? 1,
+          startMonthKey: (data.startMonthKey as string) ?? "",
+          endMonthKey: (data.endMonthKey as string) ?? undefined,
+          active: (data.active as boolean) ?? true,
+        };
+      });
+
+      onChange(items);
+    },
+    (error) => {
+      console.error("[firestore] listRecurringRules", { uid, path, error });
+      onError?.(error);
+    }
+  );
+};
+
+export const createRecurringRule = async (uid: string, data: RecurringRuleInput) => {
+  ensureUid(uid);
+  const path = `users/${uid}/recurringRules`;
+  const payload = {
+    name: data.name.trim(),
+    direction: data.direction,
+    amountCents: data.amountCents,
+    categoryId: data.categoryId,
+    dayOfMonth: data.dayOfMonth,
+    startMonthKey: data.startMonthKey,
+    endMonthKey: data.endMonthKey ?? undefined,
+    active: data.active ?? true,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+
+  try {
+    return await addDoc(recurringRulesCollection(uid), payload);
+  } catch (error) {
+    console.error("[firestore] createRecurringRule", { uid, path, error });
+    throw error;
+  }
+};
+
+export const updateRecurringRule = async (
+  uid: string,
+  ruleId: string,
+  data: RecurringRuleInput
+) => {
+  ensureUid(uid);
+  const path = `users/${uid}/recurringRules/${ruleId}`;
+  const payload: Record<string, unknown> = {
+    name: data.name.trim(),
+    direction: data.direction,
+    amountCents: data.amountCents,
+    categoryId: data.categoryId,
+    dayOfMonth: data.dayOfMonth,
+    startMonthKey: data.startMonthKey,
+    updatedAt: serverTimestamp(),
+  };
+
+  if (data.endMonthKey) {
+    payload.endMonthKey = data.endMonthKey;
+  } else {
+    payload.endMonthKey = deleteField();
+  }
+
+  try {
+    return await updateDoc(doc(recurringRulesCollection(uid), ruleId), payload);
+  } catch (error) {
+    console.error("[firestore] updateRecurringRule", { uid, path, error });
+    throw error;
+  }
+};
+
+export const toggleRecurringRule = async (
+  uid: string,
+  ruleId: string,
+  active: boolean
+) => {
+  ensureUid(uid);
+  const path = `users/${uid}/recurringRules/${ruleId}`;
+
+  try {
+    return await updateDoc(doc(recurringRulesCollection(uid), ruleId), {
+      active,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    console.error("[firestore] toggleRecurringRule", { uid, path, active, error });
+    throw error;
+  }
+};
+
+export const deleteRecurringRule = async (uid: string, ruleId: string) => {
+  ensureUid(uid);
+  const path = `users/${uid}/recurringRules/${ruleId}`;
+
+  try {
+    return await deleteDoc(doc(recurringRulesCollection(uid), ruleId));
+  } catch (error) {
+    console.error("[firestore] deleteRecurringRule", { uid, path, error });
     throw error;
   }
 };
@@ -337,3 +614,57 @@ export const getFirestoreErrorInfo = (error: unknown): FirestoreErrorInfo => {
 
 export const getFirestoreErrorMessage = (error: unknown) =>
   getFirestoreErrorInfo(error).message;
+
+export const buildPlannedItems = (
+  monthKey: string,
+  rules: RecurringRule[],
+  existingTransactions: Transaction[]
+) => {
+  const existingPlanned = new Set(
+    existingTransactions
+      .filter(
+        (transaction) =>
+          transaction.sourceType === "recurring" &&
+          transaction.sourceRuleId &&
+          transaction.plannedDate
+      )
+      .map(
+        (transaction) =>
+          `${transaction.sourceRuleId}_${transaction.plannedDate}`
+      )
+  );
+
+  const pad2 = (value: number) => value.toString().padStart(2, "0");
+
+  return rules
+    .filter((rule) => rule.active)
+    .filter((rule) => {
+      if (!rule.startMonthKey) {
+        return false;
+      }
+      if (monthKey < rule.startMonthKey) {
+        return false;
+      }
+      if (rule.endMonthKey && monthKey > rule.endMonthKey) {
+        return false;
+      }
+      return true;
+    })
+    .map((rule) => {
+      const day = Math.min(rule.dayOfMonth, lastDayOfMonth(monthKey));
+      const plannedDate = `${monthKey}-${pad2(day)}`;
+      const id = `${rule.id}_${plannedDate}`;
+
+      return {
+        id,
+        ruleId: rule.id,
+        name: rule.name,
+        direction: rule.direction,
+        amountCents: rule.amountCents,
+        categoryId: rule.categoryId,
+        monthKey,
+        plannedDate,
+      } satisfies PlannedItem;
+    })
+    .filter((item) => !existingPlanned.has(`${item.ruleId}_${item.plannedDate}`));
+};

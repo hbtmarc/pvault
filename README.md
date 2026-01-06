@@ -1,4 +1,4 @@
-﻿# Controle Financeiro (Sprint 1)
+# Controle Financeiro (Sprint 2)
 
 Front-end estatico (Vite + React + TypeScript + Tailwind) com autenticacao Firebase (email/senha), Firestore em producao e deploy automatico no GitHub Pages.
 
@@ -74,9 +74,21 @@ Para a autenticacao funcionar no GitHub Pages, adicione seu dominio em:
 ## Importante sobre emuladores
 Este Sprint usa Firestore em producao. Nao use emuladores para gravar dados reais.
 
+## Como usar Orcamento
+1) Va para **Orcamento** em `#/app/budget`.
+2) Selecione o mes desejado.
+3) Para cada categoria de despesa, informe o valor em reais e clique **Salvar**.
+4) O Dashboard mostra o KPI **Disponivel** (receita - total alocado).
+
+## Como usar Recorrencias
+1) Va para **Recorrencias** em `#/app/recurring`.
+2) Crie uma regra mensal (nome, tipo, valor, dia do mes, categoria e mes inicial).
+3) Em **Dashboard** ou **Lancamentos**, habilite **Mostrar previstos**.
+4) Clique **Marcar como pago** para criar a transacao real.
+
 ## Estrutura principal
 - `src/routes` -> AuthRoutes e ProtectedRoutes
-- `src/pages` -> telas Login, Register, ForgotPassword, Dashboard, Categorias, Lancamentos
+- `src/pages` -> telas Login, Register, ForgotPassword, Dashboard, Categorias, Lancamentos, Orcamento, Recorrencias
 - `src/lib` -> integracao Firebase/Auth/Firestore
 - `src/providers` -> contexto do usuario logado
 
@@ -87,6 +99,10 @@ Este Sprint usa Firestore em producao. Nao use emuladores para gravar dados reai
 - [ ] `npm run dev` abre a tela de login
 - [ ] Consigo criar conta e logar
 - [ ] Crio categorias de receita e despesa
+- [ ] Defino orcamentos por categoria no mes
+- [ ] Vejo o KPI Disponivel no Dashboard
+- [ ] Crio regras de recorrencia mensais
+- [ ] Vejo previstos e marco como pago
 - [ ] Crio lancamentos vinculados a categorias
 - [ ] Troco o mes e vejo o resumo mensal
 - [ ] Edito e excluo lancamentos

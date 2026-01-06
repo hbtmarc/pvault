@@ -1,4 +1,4 @@
-﻿const pad2 = (value: number) => value.toString().padStart(2, "0");
+const pad2 = (value: number) => value.toString().padStart(2, "0");
 
 export const getMonthKey = (date: Date) => {
   const year = date.getFullYear();
@@ -19,4 +19,9 @@ export const shiftMonthKey = (monthKey: string, delta: number) => {
   const [year, month] = monthKey.split("-").map(Number);
   const shifted = new Date(year, month - 1 + delta, 1);
   return getMonthKey(shifted);
+};
+
+export const lastDayOfMonth = (monthKey: string) => {
+  const [year, month] = monthKey.split("-").map(Number);
+  return new Date(year, month, 0).getDate();
 };

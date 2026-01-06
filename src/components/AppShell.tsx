@@ -1,4 +1,4 @@
-﻿import { type ReactNode, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { signOutUser } from "../lib/auth";
 import { useAuth } from "../providers/AuthProvider";
@@ -48,11 +48,17 @@ const AppShell = ({ title, subtitle, children }: AppShellProps) => {
             <NavLink to="/app" className={linkClass}>
               Dashboard
             </NavLink>
-            <NavLink to="/app/categories" className={linkClass}>
-              Categorias
+            <NavLink to="/app/budget" className={linkClass}>
+              Orcamento
             </NavLink>
             <NavLink to="/app/transactions" className={linkClass}>
               Lancamentos
+            </NavLink>
+            <NavLink to="/app/categories" className={linkClass}>
+              Categorias
+            </NavLink>
+            <NavLink to="/app/recurring" className={linkClass}>
+              Recorrencias
             </NavLink>
           </nav>
           <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
