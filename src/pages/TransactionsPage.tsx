@@ -20,7 +20,7 @@ import {
 import { formatCurrency } from "../lib/money";
 import { useAuth } from "../providers/AuthProvider";
 
-const HomePage = () => {
+const TransactionsPage = () => {
   const { user } = useAuth();
   const [monthKey, setMonthKey] = useState(getMonthKey(new Date()));
   const [categories, setCategories] = useState<Category[]>([]);
@@ -70,22 +70,6 @@ const HomePage = () => {
 
     return () => unsubscribe();
   }, [user, monthKey]);
-
-  const totals = useMemo(() => {
-    return transactions.reduce(
-      (acc, transaction) => {
-        if (transaction.direction === "income") {
-          acc.income += transaction.amountCents;
-        } else {
-          acc.expense += transaction.amountCents;
-        }
-        return acc;
-      },
-      { income: 0, expense: 0 }
-    );
-  }, [transactions]);
-
-  const balance = totals.income - totals.expense;
 
   const categoriesById = useMemo(() => {
     const map = new Map<string, Category>();
@@ -156,7 +140,7 @@ const HomePage = () => {
   };
 
   return (
-    <AppShell title="Dashboard" subtitle="Resumo mensal">
+    <AppShell title="Lancamentos" subtitle="Gerencie entradas e saidas">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <MonthSelector monthKey={monthKey} onChange={setMonthKey} />
         <Button onClick={openCreateModal}>+ Novo lancamento</Button>
@@ -168,38 +152,11 @@ const HomePage = () => {
         </div>
       ) : null}
 
-      <div className="mt-6 grid gap-4 md:grid-cols-3">
-        <Card>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-600">
-            Receita
-          </p>
-          <p className="mt-2 text-2xl font-bold text-slate-900">
-            {formatCurrency(totals.income)}
-          </p>
-        </Card>
-        <Card>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-rose-600">
-            Despesa
-          </p>
-          <p className="mt-2 text-2xl font-bold text-slate-900">
-            {formatCurrency(totals.expense)}
-          </p>
-        </Card>
-        <Card>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-            Saldo
-          </p>
-          <p className="mt-2 text-2xl font-bold text-slate-900">
-            {formatCurrency(balance)}
-          </p>
-        </Card>
-      </div>
-
       <Card className="mt-6">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900">Lancamentos</h2>
+          <h2 className="text-lg font-semibold text-slate-900">Lista do mes</h2>
           <span className="text-xs text-slate-500">
-            {transactions.length} itens
+            {transactions.length} lancamentos
           </span>
         </div>
 
@@ -293,4 +250,4 @@ const HomePage = () => {
   );
 };
 
-export default HomePage;
+export default TransactionsPage;

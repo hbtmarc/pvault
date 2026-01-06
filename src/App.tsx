@@ -1,10 +1,12 @@
 ﻿import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import AuthRoutes from "./routes/AuthRoutes";
 import ProtectedRoutes from "./routes/ProtectedRoutes";
+import CategoriesPage from "./pages/CategoriesPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import HomePage from "./pages/HomePage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
+import TransactionsPage from "./pages/TransactionsPage";
 
 const App = () => {
   return (
@@ -16,9 +18,12 @@ const App = () => {
           <Route path="/forgot" element={<ForgotPasswordPage />} />
         </Route>
         <Route element={<ProtectedRoutes />}>
-          <Route path="/" element={<HomePage />} />
+          <Route path="/app" element={<HomePage />} />
+          <Route path="/app/categories" element={<CategoriesPage />} />
+          <Route path="/app/transactions" element={<TransactionsPage />} />
         </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="/" element={<Navigate to="/app" replace />} />
+        <Route path="*" element={<Navigate to="/app" replace />} />
       </Routes>
     </HashRouter>
   );

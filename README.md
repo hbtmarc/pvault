@@ -1,6 +1,6 @@
-﻿# Controle Financeiro (Sprint 0)
+﻿# Controle Financeiro (Sprint 1)
 
-Front-end estatico (Vite + React + TypeScript + Tailwind) com autenticacao Firebase (email/senha) e deploy automatico no GitHub Pages.
+Front-end estatico (Vite + React + TypeScript + Tailwind) com autenticacao Firebase (email/senha), Firestore em producao e deploy automatico no GitHub Pages.
 
 ## Requisitos
 - Node.js 18+ (recomendado 20+)
@@ -17,6 +17,7 @@ npm install
 - Crie um projeto (sem Analytics, se preferir)
 - Em **Authentication** -> **Sign-in method**, habilite **Email/Password**
 - Em **Project settings** -> **General**, crie um app **Web** e copie o `firebaseConfig`
+- Em **Firestore Database**, crie o banco em **producao** (modo bloqueado e depois use as rules do projeto)
 
 3) Preencha o `.env.local` (nao commitar):
 Crie um arquivo `.env.local` na raiz com as chaves do Firebase:
@@ -45,6 +46,12 @@ npm run build
 ```
 O build sai em `dist/`.
 
+## Deploy das rules e indexes do Firestore
+Sempre que alterar regras ou indices, rode:
+```bash
+firebase deploy --only firestore:rules,firestore:indexes
+```
+
 ## Deploy automatico no GitHub Pages
 1) Suba o projeto para um repositorio no GitHub (branch `main`).
 2) Em **Settings -> Pages**, selecione **Build and deployment -> GitHub Actions**.
@@ -64,24 +71,25 @@ Para a autenticacao funcionar no GitHub Pages, adicione seu dominio em:
 - `localhost`
 - `SEU_USUARIO.github.io`
 
-## Emuladores Firebase (opcional)
-Este projeto ja inclui `firebase.json` com Auth + Firestore + UI.
-Se quiser rodar emuladores:
-```bash
-firebase emulators:start
-```
+## Importante sobre emuladores
+Este Sprint usa Firestore em producao. Nao use emuladores para gravar dados reais.
 
 ## Estrutura principal
 - `src/routes` -> AuthRoutes e ProtectedRoutes
-- `src/pages` -> telas Login, Register, ForgotPassword, Home
-- `src/lib` -> integracao Firebase/Auth
+- `src/pages` -> telas Login, Register, ForgotPassword, Dashboard, Categorias, Lancamentos
+- `src/lib` -> integracao Firebase/Auth/Firestore
 - `src/providers` -> contexto do usuario logado
 
 ## Checklist de validacao
 - [ ] Criei projeto Firebase e habilitei Email/Password
+- [ ] Criei o Firestore em producao
 - [ ] Preenchi `.env.local` com firebaseConfig
 - [ ] `npm run dev` abre a tela de login
 - [ ] Consigo criar conta e logar
+- [ ] Crio categorias de receita e despesa
+- [ ] Crio lancamentos vinculados a categorias
+- [ ] Troco o mes e vejo o resumo mensal
+- [ ] Edito e excluo lancamentos
 - [ ] Logout funciona
 - [ ] Rotas protegidas bloqueiam acesso sem login
 - [ ] GitHub Actions executa build e publica Pages
