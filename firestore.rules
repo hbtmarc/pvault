@@ -12,29 +12,24 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      // MVP: admin por UID fixo (simples e suficiente para projeto pessoal)
+      // Replace ADMIN_UID with the master admin UID.
       return signedIn() && request.auth.uid == "JPqv3o4EIqQyfbnWVS2KEcL1hoo1";
     }
 
-    // Namespace do app
     match /users/{userId} {
-
-      // Doc raiz do perfil (vamos criar no Sprint 3)
+      // Root user profile doc.
       allow read: if isOwner(userId) || isAdmin();
       allow create: if isOwner(userId);
       allow update, delete: if isOwner(userId);
 
-      // Subcoleções: categories / transactions / budgets / recurringRules / etc
+      // Subcollections: categories / transactions / budgets / recurringRules / etc.
       match /{document=**} {
-        // Dono: lê e escreve
-        allow read, write: if isOwner(userId);
-
-        // Admin: apenas leitura de qualquer userId
-        allow read: if isAdmin();
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if isOwner(userId);
       }
     }
 
-    // Negar todo o resto fora de /users
+    // Deny everything outside /users.
     match /{document=**} {
       allow read, write: if false;
     }

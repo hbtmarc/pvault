@@ -15,7 +15,7 @@ import {
   listCategories,
   updateCategory,
 } from "../lib/firestore";
-import { useAuth } from "../providers/AuthProvider";
+import { useAdmin } from "../providers/AdminProvider";
 
 const directionLabels: Record<Direction, string> = {
   income: "Receita",
@@ -23,7 +23,8 @@ const directionLabels: Record<Direction, string> = {
 };
 
 const CategoriesPage = () => {
-  const { user } = useAuth();
+  const { authUid, effectiveUid, isImpersonating } = useAdmin();
+  const canWrite = Boolean(authUid) && !isImpersonating;
   const [categories, setCategories] = useState<Category[]>([]);
   const [archivedCategories, setArchivedCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,14 +42,14 @@ const CategoriesPage = () => {
   const [editingError, setEditingError] = useState("");
 
   useEffect(() => {
-    if (!user) {
+    if (!effectiveUid) {
       return undefined;
     }
 
     setLoading(true);
 
     const unsubscribeActive = listCategories(
-      user.uid,
+      effectiveUid,
       false,
       (items) => {
         setCategories(items);
@@ -61,7 +62,7 @@ const CategoriesPage = () => {
     );
 
     const unsubscribeArchived = listCategories(
-      user.uid,
+      effectiveUid,
       true,
       (items) => {
         setArchivedCategories(items);
@@ -75,12 +76,12 @@ const CategoriesPage = () => {
       unsubscribeActive();
       unsubscribeArchived();
     };
-  }, [user]);
+  }, [effectiveUid]);
 
   const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!user) {
+    if (!authUid || !canWrite) {
       return;
     }
 
@@ -92,7 +93,7 @@ const CategoriesPage = () => {
     try {
       setCreating(true);
       setFormError("");
-      await createCategory(user.uid, { name: name.trim(), type });
+      await createCategory(authUid, { name: name.trim(), type });
       setName("");
     } catch (err) {
       setFormError(getFirestoreErrorMessage(err));
@@ -102,6 +103,9 @@ const CategoriesPage = () => {
   };
 
   const startEditing = (category: Category) => {
+    if (!canWrite) {
+      return;
+    }
     setEditingId(category.id);
     setEditingName(category.name);
     setEditingType(category.type);
@@ -116,7 +120,7 @@ const CategoriesPage = () => {
   };
 
   const handleSave = async () => {
-    if (!user || !editingId) {
+    if (!authUid || !editingId || !canWrite) {
       return;
     }
 
@@ -128,7 +132,7 @@ const CategoriesPage = () => {
     try {
       setEditingLoading(true);
       setEditingError("");
-      await updateCategory(user.uid, editingId, {
+      await updateCategory(authUid, editingId, {
         name: editingName.trim(),
         type: editingType,
       });
@@ -141,12 +145,12 @@ const CategoriesPage = () => {
   };
 
   const handleArchive = async (categoryId: string, archived: boolean) => {
-    if (!user) {
+    if (!authUid || !canWrite) {
       return;
     }
 
     try {
-      await archiveCategory(user.uid, categoryId, archived);
+      await archiveCategory(authUid, categoryId, archived);
     } catch (err) {
       setError(getFirestoreErrorInfo(err));
     }
@@ -173,6 +177,7 @@ const CategoriesPage = () => {
               value={name}
               onChange={(event) => setName(event.target.value)}
               placeholder="Ex: Salario, Mercado"
+              disabled={!canWrite}
             />
 
             <label className="flex flex-col gap-1 text-sm">
@@ -181,13 +186,14 @@ const CategoriesPage = () => {
                 className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
                 value={type}
                 onChange={(event) => setType(event.target.value as Direction)}
+                disabled={!canWrite}
               >
                 <option value="income">Receita</option>
                 <option value="expense">Despesa</option>
               </select>
             </label>
 
-            <Button type="submit" className="w-full" loading={creating}>
+            <Button type="submit" className="w-full" loading={creating} disabled={!canWrite}>
               Criar categoria
             </Button>
           </form>
@@ -228,6 +234,7 @@ const CategoriesPage = () => {
                       label="Nome"
                       value={editingName}
                       onChange={(event) => setEditingName(event.target.value)}
+                      disabled={!canWrite}
                     />
                     <label className="flex flex-col gap-1 text-sm">
                       <span className="font-medium text-slate-700">Tipo</span>
@@ -237,14 +244,14 @@ const CategoriesPage = () => {
                         onChange={(event) =>
                           setEditingType(event.target.value as Direction)
                         }
-                        disabled={editingLoading}
+                        disabled={!canWrite || editingLoading}
                       >
                         <option value="income">Receita</option>
                         <option value="expense">Despesa</option>
                       </select>
                     </label>
                     <div className="flex flex-wrap gap-2">
-                      <Button onClick={handleSave} loading={editingLoading}>
+                      <Button onClick={handleSave} loading={editingLoading} disabled={!canWrite}>
                         Salvar
                       </Button>
                       <Button
@@ -270,6 +277,7 @@ const CategoriesPage = () => {
                       <Button
                         variant="secondary"
                         onClick={() => startEditing(category)}
+                        disabled={!canWrite}
                       >
                         Editar
                       </Button>
@@ -277,6 +285,7 @@ const CategoriesPage = () => {
                         variant="secondary"
                         className="border-rose-200 text-rose-600 hover:border-rose-300"
                         onClick={() => handleArchive(category.id, true)}
+                        disabled={!canWrite}
                       >
                         Arquivar
                       </Button>
@@ -315,6 +324,7 @@ const CategoriesPage = () => {
                 <Button
                   variant="secondary"
                   onClick={() => handleArchive(category.id, false)}
+                  disabled={!canWrite}
                 >
                   Reativar
                 </Button>

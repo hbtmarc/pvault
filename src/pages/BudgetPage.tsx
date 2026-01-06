@@ -15,10 +15,11 @@ import {
   upsertBudget,
 } from "../lib/firestore";
 import { formatCentsToInput, formatCurrency, parseBRLToCents } from "../lib/money";
-import { useAuth } from "../providers/AuthProvider";
+import { useAdmin } from "../providers/AdminProvider";
 
 const BudgetPage = () => {
-  const { user } = useAuth();
+  const { authUid, effectiveUid, isImpersonating } = useAdmin();
+  const canWrite = Boolean(authUid) && !isImpersonating;
   const [monthKey, setMonthKey] = useState(getMonthKey(new Date()));
   const [categories, setCategories] = useState<Category[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
@@ -29,12 +30,12 @@ const BudgetPage = () => {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    if (!user) {
+    if (!effectiveUid) {
       return undefined;
     }
 
     const unsubscribe = listCategories(
-      user.uid,
+      effectiveUid,
       false,
       (items) => {
         setCategories(items);
@@ -43,16 +44,16 @@ const BudgetPage = () => {
     );
 
     return () => unsubscribe();
-  }, [user]);
+  }, [effectiveUid]);
 
   useEffect(() => {
-    if (!user) {
+    if (!effectiveUid) {
       return undefined;
     }
 
     setLoading(true);
     const unsubscribe = listBudgetsByMonth(
-      user.uid,
+      effectiveUid,
       monthKey,
       (items) => {
         setBudgets(items);
@@ -65,7 +66,7 @@ const BudgetPage = () => {
     );
 
     return () => unsubscribe();
-  }, [user, monthKey]);
+  }, [effectiveUid, monthKey]);
 
   const expenseCategories = useMemo(
     () => categories.filter((category) => category.type === "expense"),
@@ -100,7 +101,7 @@ const BudgetPage = () => {
   };
 
   const handleSave = async (categoryId: string) => {
-    if (!user) {
+    if (!authUid || !canWrite) {
       return;
     }
 
@@ -119,7 +120,7 @@ const BudgetPage = () => {
     try {
       setSavingId(categoryId);
       setFieldErrors((prev) => ({ ...prev, [categoryId]: "" }));
-      await upsertBudget(user.uid, monthKey, categoryId, amountCents);
+      await upsertBudget(authUid, monthKey, categoryId, amountCents);
       setDrafts((prev) => ({
         ...prev,
         [categoryId]: formatCentsToInput(amountCents),
@@ -182,6 +183,7 @@ const BudgetPage = () => {
                       value={drafts[category.id] ?? ""}
                       onChange={(event) => handleChange(category.id, event.target.value)}
                       placeholder="0,00"
+                      disabled={!canWrite}
                     />
                     {fieldError ? (
                       <span className="text-xs text-rose-500">{fieldError}</span>
@@ -191,6 +193,7 @@ const BudgetPage = () => {
                     variant="secondary"
                     onClick={() => handleSave(category.id)}
                     loading={savingId === category.id}
+                    disabled={!canWrite}
                   >
                     Salvar
                   </Button>

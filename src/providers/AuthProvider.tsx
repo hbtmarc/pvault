@@ -1,5 +1,6 @@
-﻿import { onAuthStateChanged, type User } from "firebase/auth";
+import { onAuthStateChanged, type User } from "firebase/auth";
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { upsertUserProfile } from "../lib/firestore";
 import { auth } from "../lib/firebase";
 
 type AuthContextValue = {
@@ -17,6 +18,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setLoading(false);
+
+      if (currentUser) {
+        void upsertUserProfile(currentUser.uid, currentUser.email).catch((error) =>
+          console.error("[auth] upsertUserProfile", error)
+        );
+      }
     });
 
     return () => unsubscribe();

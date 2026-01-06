@@ -25,10 +25,11 @@ import {
   updateTransaction,
 } from "../lib/firestore";
 import { formatCurrency } from "../lib/money";
-import { useAuth } from "../providers/AuthProvider";
+import { useAdmin } from "../providers/AdminProvider";
 
 const TransactionsPage = () => {
-  const { user } = useAuth();
+  const { authUid, effectiveUid, isImpersonating } = useAdmin();
+  const canWrite = Boolean(authUid) && !isImpersonating;
   const [monthKey, setMonthKey] = useState(getMonthKey(new Date()));
   const [categories, setCategories] = useState<Category[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -44,29 +45,29 @@ const TransactionsPage = () => {
   const [payingId, setPayingId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!user) {
+    if (!effectiveUid) {
       return undefined;
     }
 
     const unsubscribe = listCategories(
-      user.uid,
+      effectiveUid,
       false,
       (items) => setCategories(items),
       (err) => setError(getFirestoreErrorInfo(err))
     );
 
     return () => unsubscribe();
-  }, [user]);
+  }, [effectiveUid]);
 
   useEffect(() => {
-    if (!user) {
+    if (!effectiveUid) {
       return undefined;
     }
 
     setLoading(true);
 
     const unsubscribe = listTransactionsByMonth(
-      user.uid,
+      effectiveUid,
       monthKey,
       (items) => {
         setTransactions(items);
@@ -79,21 +80,21 @@ const TransactionsPage = () => {
     );
 
     return () => unsubscribe();
-  }, [user, monthKey]);
+  }, [effectiveUid, monthKey]);
 
   useEffect(() => {
-    if (!user) {
+    if (!effectiveUid) {
       return undefined;
     }
 
     const unsubscribe = listRecurringRules(
-      user.uid,
+      effectiveUid,
       (items) => setRules(items),
       (err) => setError(getFirestoreErrorInfo(err))
     );
 
     return () => unsubscribe();
-  }, [user]);
+  }, [effectiveUid]);
 
   const categoriesById = useMemo(() => {
     const map = new Map<string, Category>();
@@ -109,12 +110,18 @@ const TransactionsPage = () => {
   );
 
   const openCreateModal = () => {
+    if (!canWrite) {
+      return;
+    }
     setEditing(null);
     setModalError("");
     setModalOpen(true);
   };
 
   const openEditModal = (transaction: Transaction) => {
+    if (!canWrite) {
+      return;
+    }
     setEditing(transaction);
     setModalError("");
     setModalOpen(true);
@@ -128,7 +135,7 @@ const TransactionsPage = () => {
   };
 
   const handleSave = async (values: TransactionDraft) => {
-    if (!user) {
+    if (!authUid || !canWrite) {
       return;
     }
 
@@ -137,9 +144,9 @@ const TransactionsPage = () => {
       setModalError("");
 
       if (editing) {
-        await updateTransaction(user.uid, editing.id, values);
+        await updateTransaction(authUid, editing.id, values);
       } else {
-        await createTransaction(user.uid, values);
+        await createTransaction(authUid, values);
       }
 
       setModalOpen(false);
@@ -152,7 +159,7 @@ const TransactionsPage = () => {
   };
 
   const handleDelete = async (transaction: Transaction) => {
-    if (!user) {
+    if (!authUid || !canWrite) {
       return;
     }
 
@@ -162,20 +169,20 @@ const TransactionsPage = () => {
     }
 
     try {
-      await removeTransaction(user.uid, transaction.id);
+      await removeTransaction(authUid, transaction.id);
     } catch (err) {
       setError(getFirestoreErrorInfo(err));
     }
   };
 
   const handleMarkAsPaid = async (item: PlannedItem) => {
-    if (!user) {
+    if (!authUid || !canWrite) {
       return;
     }
 
     try {
       setPayingId(item.id);
-      await createTransaction(user.uid, {
+      await createTransaction(authUid, {
         direction: item.direction,
         amountCents: item.amountCents,
         date: item.plannedDate,
@@ -196,7 +203,9 @@ const TransactionsPage = () => {
     <AppShell title="Lancamentos" subtitle="Gerencie entradas e saidas">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <MonthSelector monthKey={monthKey} onChange={setMonthKey} />
-        <Button onClick={openCreateModal}>+ Novo lancamento</Button>
+        <Button onClick={openCreateModal} disabled={!canWrite}>
+          + Novo lancamento
+        </Button>
       </div>
 
       <ErrorBanner info={error} className="mt-4" />
@@ -264,6 +273,7 @@ const TransactionsPage = () => {
                       variant="secondary"
                       onClick={() => handleMarkAsPaid(item)}
                       loading={payingId === item.id}
+                      disabled={!canWrite}
                     >
                       Marcar como pago
                     </Button>
@@ -336,6 +346,7 @@ const TransactionsPage = () => {
                   <Button
                     variant="secondary"
                     onClick={() => openEditModal(transaction)}
+                    disabled={!canWrite}
                   >
                     Editar
                   </Button>
@@ -343,6 +354,7 @@ const TransactionsPage = () => {
                     variant="secondary"
                     className="border-rose-200 text-rose-600 hover:border-rose-300"
                     onClick={() => handleDelete(transaction)}
+                    disabled={!canWrite}
                   >
                     Excluir
                   </Button>
@@ -373,6 +385,7 @@ const TransactionsPage = () => {
         onClose={closeModal}
         busy={saving}
         error={modalError}
+        readOnly={!canWrite}
       />
     </AppShell>
   );

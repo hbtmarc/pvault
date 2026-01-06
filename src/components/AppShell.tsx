@@ -1,6 +1,7 @@
 import { type ReactNode, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { signOutUser } from "../lib/auth";
+import { useAdmin } from "../providers/AdminProvider";
 import { useAuth } from "../providers/AuthProvider";
 import Button from "./Button";
 
@@ -12,6 +13,8 @@ type AppShellProps = {
 
 const AppShell = ({ title, subtitle, children }: AppShellProps) => {
   const { user } = useAuth();
+  const { isAdmin, isImpersonating, impersonationLabel, stopImpersonation } =
+    useAdmin();
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState("");
 
@@ -60,6 +63,11 @@ const AppShell = ({ title, subtitle, children }: AppShellProps) => {
             <NavLink to="/app/recurring" className={linkClass}>
               Recorrencias
             </NavLink>
+            {isAdmin ? (
+              <NavLink to="/app/admin" className={linkClass}>
+                Admin
+              </NavLink>
+            ) : null}
           </nav>
           <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
             {signOutError ? (
@@ -71,6 +79,19 @@ const AppShell = ({ title, subtitle, children }: AppShellProps) => {
           </div>
         </div>
       </header>
+
+      {isImpersonating ? (
+        <div className="border-b border-amber-200 bg-amber-50/70">
+          <div className="mx-auto flex max-w-6xl flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-xs font-semibold text-amber-700">
+              Modo Admin - Visualizando como {impersonationLabel}
+            </span>
+            <Button variant="secondary" onClick={stopImpersonation}>
+              Sair
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       <main className="mx-auto max-w-6xl px-4 py-8">
         <div className="mb-6 space-y-1">

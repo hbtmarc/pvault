@@ -1,4 +1,4 @@
-﻿import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { formatCentsToInput, parseAmountToCents } from "../lib/money";
 import { todayDateInput } from "../lib/date";
 import type { Category, Direction } from "../lib/firestore";
@@ -22,6 +22,7 @@ type TransactionFormModalProps = {
   onClose: () => void;
   busy?: boolean;
   error?: string;
+  readOnly?: boolean;
 };
 
 type FormErrors = {
@@ -41,6 +42,7 @@ const TransactionFormModal = ({
   onClose,
   busy,
   error,
+  readOnly,
 }: TransactionFormModalProps) => {
   const [direction, setDirection] = useState<Direction>("expense");
   const [amount, setAmount] = useState("");
@@ -90,8 +92,14 @@ const TransactionFormModal = ({
     return null;
   }
 
+  const isDisabled = Boolean(busy || readOnly);
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (readOnly) {
+      return;
+    }
 
     const nextErrors: FormErrors = {};
     const amountCents = parseAmountToCents(amount);
@@ -159,7 +167,7 @@ const TransactionFormModal = ({
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
               value={direction}
               onChange={(event) => setDirection(event.target.value as Direction)}
-              disabled={busy}
+              disabled={isDisabled}
             >
               <option value="income">Receita</option>
               <option value="expense">Despesa</option>
@@ -175,7 +183,7 @@ const TransactionFormModal = ({
               placeholder="0,00"
               value={amount}
               onChange={(event) => setAmount(event.target.value)}
-              disabled={busy}
+              disabled={isDisabled}
             />
             {errors.amount ? (
               <span className="text-xs text-rose-500">{errors.amount}</span>
@@ -191,7 +199,7 @@ const TransactionFormModal = ({
               }`}
               value={date}
               onChange={(event) => setDate(event.target.value)}
-              disabled={busy}
+              disabled={isDisabled}
             />
             {errors.date ? (
               <span className="text-xs text-rose-500">{errors.date}</span>
@@ -206,7 +214,7 @@ const TransactionFormModal = ({
               }`}
               value={categoryId}
               onChange={(event) => setCategoryId(event.target.value)}
-              disabled={busy || availableCategories.length === 0}
+              disabled={isDisabled || availableCategories.length === 0}
             >
               {availableCategories.length === 0 ? (
                 <option value="">Nenhuma categoria do tipo selecionado</option>
@@ -228,7 +236,7 @@ const TransactionFormModal = ({
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
               value={description}
               onChange={(event) => setDescription(event.target.value)}
-              disabled={busy}
+              disabled={isDisabled}
             />
           </label>
 
@@ -236,7 +244,7 @@ const TransactionFormModal = ({
             <Button type="button" variant="secondary" onClick={onClose}>
               Cancelar
             </Button>
-            <Button type="submit" loading={busy}>
+            <Button type="submit" loading={busy} disabled={isDisabled}>
               {submitLabel}
             </Button>
           </div>

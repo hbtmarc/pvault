@@ -60,6 +60,14 @@ export type RecurringRule = {
   active: boolean;
 };
 
+export type UserProfile = {
+  id: string;
+  uid: string;
+  email?: string;
+  createdAt?: unknown;
+  lastSeenAt?: unknown;
+};
+
 export type PlannedItem = {
   id: string;
   ruleId: string;
@@ -116,6 +124,8 @@ const budgetsCollection = (uid: string) => collection(db, "users", uid, "budgets
 
 const recurringRulesCollection = (uid: string) =>
   collection(db, "users", uid, "recurringRules");
+
+const usersCollection = () => collection(db, "users");
 
 const ensureUid = (uid: string) => {
   if (!uid) {
@@ -558,6 +568,62 @@ export const deleteRecurringRule = async (uid: string, ruleId: string) => {
     console.error("[firestore] deleteRecurringRule", { uid, path, error });
     throw error;
   }
+};
+
+export const upsertUserProfile = async (
+  uid: string,
+  email: string | null | undefined
+) => {
+  ensureUid(uid);
+  const path = `users/${uid}`;
+  const payload = {
+    uid,
+    email: email ?? "",
+    createdAt: serverTimestamp(),
+    lastSeenAt: serverTimestamp(),
+  };
+
+  try {
+    return await setDoc(doc(usersCollection(), uid), payload, { merge: true });
+  } catch (error) {
+    console.error("[firestore] upsertUserProfile", { uid, path, error });
+    throw error;
+  }
+};
+
+export const listUserProfiles = (
+  authUid: string,
+  onChange: (items: UserProfile[]) => void,
+  onError?: (error: unknown) => void
+) => {
+  ensureUid(authUid);
+  const path = "users";
+
+  logDev("[firestore] listUserProfiles", { authUid, path });
+
+  const usersQuery = query(usersCollection(), orderBy("email", "asc"));
+
+  return onSnapshot(
+    usersQuery,
+    (snapshot) => {
+      const items = snapshot.docs.map((item) => {
+        const data = item.data();
+        return {
+          id: item.id,
+          uid: (data.uid as string) ?? item.id,
+          email: (data.email as string) ?? "",
+          createdAt: data.createdAt,
+          lastSeenAt: data.lastSeenAt,
+        };
+      });
+
+      onChange(items);
+    },
+    (error) => {
+      console.error("[firestore] listUserProfiles", { authUid, path, error });
+      onError?.(error);
+    }
+  );
 };
 
 const isIndexError = (error: FirebaseError) => {

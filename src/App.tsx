@@ -1,6 +1,8 @@
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import AuthRoutes from "./routes/AuthRoutes";
 import ProtectedRoutes from "./routes/ProtectedRoutes";
+import AdminRoutes from "./routes/AdminRoutes";
+import AdminPage from "./pages/AdminPage";
 import BudgetPage from "./pages/BudgetPage";
 import CategoriesPage from "./pages/CategoriesPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
@@ -25,6 +27,9 @@ const App = () => {
           <Route path="/app/transactions" element={<TransactionsPage />} />
           <Route path="/app/categories" element={<CategoriesPage />} />
           <Route path="/app/recurring" element={<RecurringPage />} />
+          <Route element={<AdminRoutes />}>
+            <Route path="/app/admin" element={<AdminPage />} />
+          </Route>
         </Route>
         <Route path="/" element={<Navigate to="/app" replace />} />
         <Route path="*" element={<Navigate to="/app" replace />} />

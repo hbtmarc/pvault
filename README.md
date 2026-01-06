@@ -86,9 +86,28 @@ Este Sprint usa Firestore em producao. Nao use emuladores para gravar dados reai
 3) Em **Dashboard** ou **Lancamentos**, habilite **Mostrar previstos**.
 4) Clique **Marcar como pago** para criar a transacao real.
 
+## Admin mestre (Sprint 3)
+1) Pegue o UID do usuario admin em **Firebase Console -> Authentication -> Users**.
+2) Adicione no `.env.local` (lista separada por virgula):
+```bash
+VITE_ADMIN_UIDS=UID_DO_ADMIN,OUTRO_UID
+```
+3) Em `firestore.rules`, substitua `ADMIN_UID` pelo UID do admin.
+4) Rode o deploy das rules:
+```bash
+firebase deploy --only firestore:rules
+```
+5) Reinicie o `npm run dev` para ler o novo `.env.local`.
+
+Como testar:
+- Crie dois usuarios (admin + normal).
+- Entre com o admin: o menu **Admin** aparece e lista usuarios.
+- Clique **Visualizar como** para navegar como outro usuario (modo leitura).
+- Saia do modo admin no banner para voltar a escrever.
+
 ## Estrutura principal
 - `src/routes` -> AuthRoutes e ProtectedRoutes
-- `src/pages` -> telas Login, Register, ForgotPassword, Dashboard, Categorias, Lancamentos, Orcamento, Recorrencias
+- `src/pages` -> telas Login, Register, ForgotPassword, Dashboard, Categorias, Lancamentos, Orcamento, Recorrencias, Admin
 - `src/lib` -> integracao Firebase/Auth/Firestore
 - `src/providers` -> contexto do usuario logado
 

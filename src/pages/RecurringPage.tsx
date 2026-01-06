@@ -22,7 +22,7 @@ import {
   updateRecurringRule,
 } from "../lib/firestore";
 import { formatCentsToInput, formatCurrency, parseBRLToCents } from "../lib/money";
-import { useAuth } from "../providers/AuthProvider";
+import { useAdmin } from "../providers/AdminProvider";
 
 const directionLabels: Record<Direction, string> = {
   income: "Receita",
@@ -30,7 +30,8 @@ const directionLabels: Record<Direction, string> = {
 };
 
 const RecurringPage = () => {
-  const { user } = useAuth();
+  const { authUid, effectiveUid, isImpersonating } = useAdmin();
+  const canWrite = Boolean(authUid) && !isImpersonating;
   const [monthKey, setMonthKey] = useState(getMonthKey(new Date()));
   const [categories, setCategories] = useState<Category[]>([]);
   const [rules, setRules] = useState<RecurringRule[]>([]);
@@ -50,27 +51,27 @@ const RecurringPage = () => {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!user) {
+    if (!effectiveUid) {
       return undefined;
     }
 
     const unsubscribe = listCategories(
-      user.uid,
+      effectiveUid,
       false,
       (items) => setCategories(items),
       (err) => setError(getFirestoreErrorInfo(err))
     );
 
     return () => unsubscribe();
-  }, [user]);
+  }, [effectiveUid]);
 
   useEffect(() => {
-    if (!user) {
+    if (!effectiveUid) {
       return undefined;
     }
 
     const unsubscribe = listRecurringRules(
-      user.uid,
+      effectiveUid,
       (items) => {
         setRules(items);
         setLoading(false);
@@ -82,22 +83,22 @@ const RecurringPage = () => {
     );
 
     return () => unsubscribe();
-  }, [user]);
+  }, [effectiveUid]);
 
   useEffect(() => {
-    if (!user) {
+    if (!effectiveUid) {
       return undefined;
     }
 
     const unsubscribe = listTransactionsByMonth(
-      user.uid,
+      effectiveUid,
       monthKey,
       (items) => setTransactions(items),
       (err) => setError(getFirestoreErrorInfo(err))
     );
 
     return () => unsubscribe();
-  }, [user, monthKey]);
+  }, [effectiveUid, monthKey]);
 
   const availableCategories = useMemo(
     () => categories.filter((category) => category.type === formDirection),
@@ -141,6 +142,9 @@ const RecurringPage = () => {
   };
 
   const startEditing = (rule: RecurringRule) => {
+    if (!canWrite) {
+      return;
+    }
     setEditingId(rule.id);
     setFormName(rule.name);
     setFormDirection(rule.direction);
@@ -155,7 +159,7 @@ const RecurringPage = () => {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!user) {
+    if (!authUid || !canWrite) {
       return;
     }
 
@@ -206,9 +210,9 @@ const RecurringPage = () => {
       };
 
       if (editingId) {
-        await updateRecurringRule(user.uid, editingId, payload);
+        await updateRecurringRule(authUid, editingId, payload);
       } else {
-        await createRecurringRule(user.uid, payload);
+        await createRecurringRule(authUid, payload);
       }
 
       resetForm();
@@ -220,19 +224,19 @@ const RecurringPage = () => {
   };
 
   const handleToggle = async (rule: RecurringRule) => {
-    if (!user) {
+    if (!authUid || !canWrite) {
       return;
     }
 
     try {
-      await toggleRecurringRule(user.uid, rule.id, !rule.active);
+      await toggleRecurringRule(authUid, rule.id, !rule.active);
     } catch (err) {
       setError(getFirestoreErrorInfo(err));
     }
   };
 
   const handleDelete = async (rule: RecurringRule) => {
-    if (!user) {
+    if (!authUid || !canWrite) {
       return;
     }
 
@@ -242,7 +246,7 @@ const RecurringPage = () => {
     }
 
     try {
-      await deleteRecurringRule(user.uid, rule.id);
+      await deleteRecurringRule(authUid, rule.id);
     } catch (err) {
       setError(getFirestoreErrorInfo(err));
     }
@@ -272,6 +276,7 @@ const RecurringPage = () => {
               value={formName}
               onChange={(event) => setFormName(event.target.value)}
               placeholder="Ex: Aluguel, Salario"
+              disabled={!canWrite}
             />
           </label>
 
@@ -281,6 +286,7 @@ const RecurringPage = () => {
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
               value={formDirection}
               onChange={(event) => setFormDirection(event.target.value as Direction)}
+              disabled={!canWrite}
             >
               <option value="income">Receita</option>
               <option value="expense">Despesa</option>
@@ -294,6 +300,7 @@ const RecurringPage = () => {
               value={formAmount}
               onChange={(event) => setFormAmount(event.target.value)}
               placeholder="0,00"
+              disabled={!canWrite}
             />
           </label>
 
@@ -306,6 +313,7 @@ const RecurringPage = () => {
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
               value={formDay}
               onChange={(event) => setFormDay(event.target.value)}
+              disabled={!canWrite}
             />
           </label>
 
@@ -315,6 +323,7 @@ const RecurringPage = () => {
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
               value={formCategoryId}
               onChange={(event) => setFormCategoryId(event.target.value)}
+              disabled={!canWrite}
             >
               {availableCategories.length === 0 ? (
                 <option value="">Nenhuma categoria disponivel</option>
@@ -334,6 +343,7 @@ const RecurringPage = () => {
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
               value={formStartMonthKey}
               onChange={(event) => setFormStartMonthKey(event.target.value)}
+              disabled={!canWrite}
             />
           </label>
 
@@ -344,11 +354,12 @@ const RecurringPage = () => {
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
               value={formEndMonthKey}
               onChange={(event) => setFormEndMonthKey(event.target.value)}
+              disabled={!canWrite}
             />
           </label>
 
           <div className="flex flex-wrap items-center gap-2 md:col-span-2">
-            <Button type="submit" loading={saving}>
+            <Button type="submit" loading={saving} disabled={!canWrite}>
               {editingId ? "Salvar" : "Criar recorrencia"}
             </Button>
             {editingId ? (
@@ -413,16 +424,25 @@ const RecurringPage = () => {
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button variant="secondary" onClick={() => startEditing(rule)}>
+                  <Button
+                    variant="secondary"
+                    onClick={() => startEditing(rule)}
+                    disabled={!canWrite}
+                  >
                     Editar
                   </Button>
-                  <Button variant="secondary" onClick={() => handleToggle(rule)}>
+                  <Button
+                    variant="secondary"
+                    onClick={() => handleToggle(rule)}
+                    disabled={!canWrite}
+                  >
                     {rule.active ? "Desativar" : "Ativar"}
                   </Button>
                   <Button
                     variant="secondary"
                     className="border-rose-200 text-rose-600 hover:border-rose-300"
                     onClick={() => handleDelete(rule)}
+                    disabled={!canWrite}
                   >
                     Excluir
                   </Button>
