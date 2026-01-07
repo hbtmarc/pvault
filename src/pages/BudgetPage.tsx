@@ -3,7 +3,7 @@ import AppShell from "../components/AppShell";
 import Button from "../components/Button";
 import Card from "../components/Card";
 import ErrorBanner from "../components/ErrorBanner";
-import MonthSelector from "../components/MonthSelector";
+import MonthToolbar from "../components/month/MonthToolbar";
 import { useMonthKey } from "../hooks/useMonthKey";
 import {
   type Budget,
@@ -19,7 +19,7 @@ import { useAdmin } from "../providers/AdminProvider";
 
 const BudgetPage = () => {
   const { authUid, effectiveUid, isImpersonating } = useAdmin();
-  const { monthKey, setMonthKey } = useMonthKey();
+  const { monthKey } = useMonthKey();
   const canWrite = Boolean(authUid) && !isImpersonating;
   const [categories, setCategories] = useState<Category[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
@@ -134,12 +134,13 @@ const BudgetPage = () => {
 
   return (
     <AppShell title="Orcamento" subtitle="Alocacao mensal por categoria">
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <MonthSelector monthKey={monthKey} onChange={setMonthKey} />
-        <div className="text-sm text-slate-600">
-          Total alocado: {formatCurrency(totalAllocated)}
-        </div>
-      </div>
+      <MonthToolbar
+        rightSlot={
+          <div className="text-sm text-slate-600">
+            Total alocado: {formatCurrency(totalAllocated)}
+          </div>
+        }
+      />
 
       <ErrorBanner info={error} className="mt-4" />
 

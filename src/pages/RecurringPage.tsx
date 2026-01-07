@@ -3,7 +3,7 @@ import AppShell from "../components/AppShell";
 import Button from "../components/Button";
 import Card from "../components/Card";
 import ErrorBanner from "../components/ErrorBanner";
-import MonthSelector from "../components/MonthSelector";
+import MonthToolbar from "../components/month/MonthToolbar";
 import { getMonthKey } from "../lib/date";
 import { useMonthKey } from "../hooks/useMonthKey";
 import {
@@ -32,7 +32,7 @@ const directionLabels: Record<Direction, string> = {
 
 const RecurringPage = () => {
   const { authUid, effectiveUid, isImpersonating } = useAdmin();
-  const { monthKey, setMonthKey } = useMonthKey();
+  const { monthKey } = useMonthKey();
   const canWrite = Boolean(authUid) && !isImpersonating;
   const [categories, setCategories] = useState<Category[]>([]);
   const [rules, setRules] = useState<RecurringRule[]>([]);
@@ -455,15 +455,13 @@ const RecurringPage = () => {
       </Card>
 
       <Card className="mt-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">Previstos</h2>
-            <p className="text-sm text-slate-500">
-              Preview do mes selecionado, sem gravar no Firestore.
-            </p>
-          </div>
-          <MonthSelector monthKey={monthKey} onChange={setMonthKey} />
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Previstos</h2>
+          <p className="text-sm text-slate-500">
+            Preview do mes selecionado, sem gravar no Firestore.
+          </p>
         </div>
+        <MonthToolbar className="mt-4 mb-4" />
 
         {plannedItems.length === 0 ? (
           <p className="mt-4 text-sm text-slate-500">Nenhum previsto para este mes.</p>

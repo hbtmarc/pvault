@@ -4,6 +4,7 @@ import Button from "../components/Button";
 import Card from "../components/Card";
 import ErrorBanner from "../components/ErrorBanner";
 import Input from "../components/Input";
+import MonthToolbar, { formatMonthLabel } from "../components/month/MonthToolbar";
 import { useMonthKey } from "../hooks/useMonthKey";
 import {
   type Card as CardType,
@@ -19,11 +20,10 @@ import {
 } from "../lib/firestore";
 import { formatCentsToInput, formatCurrency, parseBRLToCents } from "../lib/money";
 import { useAdmin } from "../providers/AdminProvider";
-import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 
 const CardsPage = () => {
   const { authUid, effectiveUid, isImpersonating } = useAdmin();
-  const { monthKey, setMonthKey } = useMonthKey();
+  const { monthKey } = useMonthKey();
   const canWrite = Boolean(authUid) && !isImpersonating;
   const [cards, setCards] = useState<CardType[]>([]);
   const [archivedCards, setArchivedCards] = useState<CardType[]>([]);
@@ -47,40 +47,7 @@ const CardsPage = () => {
   const [editingLimit, setEditingLimit] = useState("");
   const [editingLoading, setEditingLoading] = useState(false);
   const [editingError, setEditingError] = useState("");
-
-  const parseMonthKey = (value: string) => {
-    if (!/^\d{4}-\d{2}$/.test(value)) {
-      const today = new Date();
-      return { year: today.getFullYear(), monthIndex: today.getMonth() };
-    }
-    const [yearText, monthText] = value.split("-");
-    const year = Number(yearText);
-    const monthIndex = Number(monthText) - 1;
-    return { year, monthIndex };
-  };
-
-  const formatMonthKey = (date: Date) => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    return `${year}-${month}`;
-  };
-
-  const addMonths = (value: string, delta: number) => {
-    const { year, monthIndex } = parseMonthKey(value);
-    const next = new Date(year, monthIndex + delta, 1);
-    return formatMonthKey(next);
-  };
-
-  const getTodayMonthKey = () => formatMonthKey(new Date());
-  const todayMonthKey = getTodayMonthKey();
-  const isCurrentMonth = monthKey === todayMonthKey;
-
-  const { year: labelYear, monthIndex: labelMonthIndex } = parseMonthKey(monthKey);
-  const monthLabel = new Intl.DateTimeFormat("pt-BR", { month: "long" }).format(
-    new Date(labelYear, labelMonthIndex, 1)
-  );
-  const monthLabelCapitalized =
-    monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
+  const monthLabel = formatMonthLabel(monthKey);
 
   useEffect(() => {
     if (!effectiveUid) {
@@ -292,50 +259,13 @@ const CardsPage = () => {
 
   return (
     <AppShell title="Cartoes" subtitle="Gerencie seus cartoes de credito">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
-        <div className="flex items-center justify-between gap-2 sm:justify-start">
-          <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              className="h-9 w-9 p-0 sm:h-10 sm:w-10"
-              onClick={() => setMonthKey(addMonths(monthKey, -1))}
-              aria-label="Mes anterior"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <div className="min-w-[9rem] text-center font-medium text-slate-900">
-              {monthLabelCapitalized}
-              <span className="ml-2 text-xs font-normal text-slate-500">
-                {labelYear}
-              </span>
-            </div>
-            <Button
-              variant="secondary"
-              className="h-9 w-9 p-0 sm:h-10 sm:w-10"
-              onClick={() => setMonthKey(addMonths(monthKey, 1))}
-              aria-label="Proximo mes"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-          <Button
-            variant="secondary"
-            className="h-9 w-9 p-0 sm:h-10 sm:w-10"
-            onClick={() => setMonthKey(todayMonthKey)}
-            aria-label="Voltar para o mes atual"
-            disabled={isCurrentMonth}
-          >
-            <Calendar className="h-4 w-4" />
-          </Button>
-        </div>
-        <span className="text-sm text-slate-500">
-          Fatura do mes:{" "}
-          <span className="font-medium text-slate-700">
-            {monthLabelCapitalized}
-          </span>{" "}
-          <span className="text-xs text-slate-400">{labelYear}</span>
-        </span>
-      </div>
+      <MonthToolbar
+        rightSlot={
+          <span className="text-sm text-slate-500">
+            Fatura do mes: <span className="font-medium text-slate-700">{monthLabel}</span>
+          </span>
+        }
+      />
 
       <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
         <Card>

@@ -3,7 +3,7 @@ import AppShell from "../components/AppShell";
 import Button from "../components/Button";
 import Card from "../components/Card";
 import ErrorBanner from "../components/ErrorBanner";
-import MonthSelector from "../components/MonthSelector";
+import MonthToolbar from "../components/month/MonthToolbar";
 import SubtotalBar from "../components/SubtotalBar";
 import { getDueDateISO, shiftMonthKey } from "../lib/date";
 import { useMonthKey } from "../hooks/useMonthKey";
@@ -31,7 +31,7 @@ import { useAdmin } from "../providers/AdminProvider";
 
 const StatementsPage = () => {
   const { authUid, effectiveUid, isImpersonating } = useAdmin();
-  const { monthKey, setMonthKey } = useMonthKey();
+  const { monthKey } = useMonthKey();
   const canWrite = Boolean(authUid) && !isImpersonating;
   const [cards, setCards] = useState<CardType[]>([]);
   const [selectedCardId, setSelectedCardId] = useState("");
@@ -282,27 +282,28 @@ const StatementsPage = () => {
 
   return (
     <AppShell title="Faturas" subtitle="Acompanhe seus ciclos de cartao">
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <MonthSelector monthKey={monthKey} onChange={setMonthKey} />
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="font-medium text-slate-700">Cartao</span>
-          <select
-            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            value={selectedCardId}
-            onChange={(event) => setSelectedCardId(event.target.value)}
-            disabled={cards.length === 0}
-          >
-            {cards.length === 0 ? (
-              <option value="">Nenhum cartao cadastrado</option>
-            ) : null}
-            {cards.map((card) => (
-              <option key={card.id} value={card.id}>
-                {card.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+      <MonthToolbar
+        rightSlot={
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium text-slate-700">Cartao</span>
+            <select
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              value={selectedCardId}
+              onChange={(event) => setSelectedCardId(event.target.value)}
+              disabled={cards.length === 0}
+            >
+              {cards.length === 0 ? (
+                <option value="">Nenhum cartao cadastrado</option>
+              ) : null}
+              {cards.map((card) => (
+                <option key={card.id} value={card.id}>
+                  {card.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        }
+      />
 
       <ErrorBanner info={error} className="mt-4" />
 

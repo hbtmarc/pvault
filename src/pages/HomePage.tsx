@@ -3,7 +3,7 @@ import AppShell from "../components/AppShell";
 import Button from "../components/Button";
 import Card from "../components/Card";
 import ErrorBanner from "../components/ErrorBanner";
-import MonthSelector from "../components/MonthSelector";
+import MonthToolbar from "../components/month/MonthToolbar";
 import TransactionFormModal, {
   type TransactionDraft,
 } from "../components/TransactionFormModal";
@@ -37,7 +37,7 @@ import { useAdmin } from "../providers/AdminProvider";
 
 const HomePage = () => {
   const { authUid, effectiveUid, isImpersonating } = useAdmin();
-  const { monthKey, setMonthKey } = useMonthKey();
+  const { monthKey } = useMonthKey();
   const canWrite = Boolean(authUid) && !isImpersonating;
   const [categories, setCategories] = useState<Category[]>([]);
   const [cards, setCards] = useState<CardType[]>([]);
@@ -395,12 +395,13 @@ const HomePage = () => {
 
   return (
     <AppShell title="Dashboard" subtitle="Resumo mensal">
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <MonthSelector monthKey={monthKey} onChange={setMonthKey} />
-        <Button onClick={openCreateModal} disabled={!canWrite}>
-          + Novo lancamento
-        </Button>
-      </div>
+      <MonthToolbar
+        rightSlot={
+          <Button onClick={openCreateModal} disabled={!canWrite}>
+            + Novo lancamento
+          </Button>
+        }
+      />
 
       <ErrorBanner info={error} className="mt-4" />
 
