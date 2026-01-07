@@ -63,6 +63,9 @@ const AppShell = ({ title, subtitle, children }: AppShellProps) => {
             <NavLink to="/app/transactions" className={linkClass}>
               Lancamentos
             </NavLink>
+            <NavLink to="/app/import" className={linkClass}>
+              Importar
+            </NavLink>
             <NavLink to="/app/categories" className={linkClass}>
               Categorias
             </NavLink>
