@@ -86,6 +86,13 @@ Este Sprint usa Firestore em producao. Nao use emuladores para gravar dados reai
 3) Em **Dashboard** ou **Lancamentos**, habilite **Mostrar previstos**.
 4) Clique **Marcar como pago** para criar a transacao real.
 
+## Como usar Cartoes e Faturas
+1) Va para **Cartoes** em `#/app/cards` e cadastre o cartao (fechamento e vencimento).
+2) Em **Lancamentos**, escolha **Cartao** na forma de pagamento e selecione o cartao.
+3) Para compras parceladas, marque **Parcelar** e informe o numero de parcelas (2..24).
+4) Em **Faturas** (`#/app/statements`), escolha o cartao e o mes para ver os itens.
+5) Use **Marcar fatura como paga** para criar a transacao de pagamento (tipo `transfer`, nao entra nos KPIs).
+
 ## Admin mestre (Sprint 3)
 1) Pegue o UID do usuario admin em **Firebase Console -> Authentication -> Users**.
 2) Adicione no `.env.local` (lista separada por virgula):
@@ -107,7 +114,7 @@ Como testar:
 
 ## Estrutura principal
 - `src/routes` -> AuthRoutes e ProtectedRoutes
-- `src/pages` -> telas Login, Register, ForgotPassword, Dashboard, Categorias, Lancamentos, Orcamento, Recorrencias, Admin
+- `src/pages` -> telas Login, Register, ForgotPassword, Dashboard, Categorias, Lancamentos, Orcamento, Recorrencias, Cartoes, Faturas, Admin
 - `src/lib` -> integracao Firebase/Auth/Firestore
 - `src/providers` -> contexto do usuario logado
 

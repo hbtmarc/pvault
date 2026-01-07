@@ -49,3 +49,17 @@ export const parseBRLToCents = (raw: string) => parseAmountToCents(raw);
 
 export const formatCentsToBRL = (amountCents: number) =>
   formatCurrency(amountCents);
+
+export const getInstallmentAmount = (
+  totalCents: number,
+  installments: number,
+  installmentNumber: number
+) => {
+  if (installments <= 0) {
+    return totalCents;
+  }
+
+  const base = Math.floor(totalCents / installments);
+  const remainder = totalCents % installments;
+  return base + (installmentNumber <= remainder ? 1 : 0);
+};

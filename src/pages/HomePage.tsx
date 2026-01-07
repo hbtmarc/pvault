@@ -10,23 +10,29 @@ import TransactionFormModal, {
 import { getMonthKey } from "../lib/date";
 import {
   type Budget,
+  type Card as CardType,
   type Category,
   type FirestoreErrorInfo,
+  type InstallmentPlan,
   type PlannedItem,
   type RecurringRule,
   type Transaction,
+  buildInstallmentPlannedItems,
   buildPlannedItems,
+  createInstallmentPlan,
   createTransaction,
   getFirestoreErrorInfo,
   getFirestoreErrorMessage,
   listBudgetsByMonth,
+  listCards,
   listCategories,
+  listInstallmentPlans,
   listRecurringRules,
   listTransactionsByMonth,
   removeTransaction,
   updateTransaction,
 } from "../lib/firestore";
-import { formatCurrency } from "../lib/money";
+import { formatCurrency, getInstallmentAmount } from "../lib/money";
 import { useAdmin } from "../providers/AdminProvider";
 
 const HomePage = () => {
@@ -34,9 +40,12 @@ const HomePage = () => {
   const canWrite = Boolean(authUid) && !isImpersonating;
   const [monthKey, setMonthKey] = useState(getMonthKey(new Date()));
   const [categories, setCategories] = useState<Category[]>([]);
+  const [cards, setCards] = useState<CardType[]>([]);
+  const [archivedCards, setArchivedCards] = useState<CardType[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [rules, setRules] = useState<RecurringRule[]>([]);
+  const [installmentPlans, setInstallmentPlans] = useState<InstallmentPlan[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FirestoreErrorInfo | null>(null);
 
@@ -56,6 +65,45 @@ const HomePage = () => {
       effectiveUid,
       false,
       (items) => setCategories(items),
+      (err) => setError(getFirestoreErrorInfo(err))
+    );
+
+    return () => unsubscribe();
+  }, [effectiveUid]);
+
+  useEffect(() => {
+    if (!effectiveUid) {
+      return undefined;
+    }
+
+    const unsubscribeActive = listCards(
+      effectiveUid,
+      false,
+      (items) => setCards(items),
+      (err) => setError(getFirestoreErrorInfo(err))
+    );
+
+    const unsubscribeArchived = listCards(
+      effectiveUid,
+      true,
+      (items) => setArchivedCards(items),
+      (err) => setError(getFirestoreErrorInfo(err))
+    );
+
+    return () => {
+      unsubscribeActive();
+      unsubscribeArchived();
+    };
+  }, [effectiveUid]);
+
+  useEffect(() => {
+    if (!effectiveUid) {
+      return undefined;
+    }
+
+    const unsubscribe = listInstallmentPlans(
+      effectiveUid,
+      (items) => setInstallmentPlans(items),
       (err) => setError(getFirestoreErrorInfo(err))
     );
 
@@ -117,7 +165,10 @@ const HomePage = () => {
   const totals = useMemo(() => {
     return transactions.reduce(
       (acc, transaction) => {
-        if (transaction.direction === "income") {
+        if (transaction.type === "transfer") {
+          return acc;
+        }
+        if (transaction.type === "income") {
           acc.income += transaction.amountCents;
         } else {
           acc.expense += transaction.amountCents;
@@ -143,9 +194,33 @@ const HomePage = () => {
     return map;
   }, [categories]);
 
-  const plannedItems = useMemo<PlannedItem[]>(
+  const allCards = useMemo(() => [...cards, ...archivedCards], [cards, archivedCards]);
+
+  const cardsById = useMemo(() => {
+    const map = new Map<string, CardType>();
+    allCards.forEach((card) => {
+      map.set(card.id, card);
+    });
+    return map;
+  }, [allCards]);
+
+  const plannedRecurring = useMemo(
     () => buildPlannedItems(monthKey, rules, transactions),
     [monthKey, rules, transactions]
+  );
+
+  const plannedInstallments = useMemo(
+    () =>
+      buildInstallmentPlannedItems(monthKey, installmentPlans, allCards, transactions),
+    [monthKey, installmentPlans, allCards, transactions]
+  );
+
+  const plannedItems = useMemo<PlannedItem[]>(
+    () =>
+      [...plannedRecurring, ...plannedInstallments].sort((a, b) =>
+        b.plannedDate.localeCompare(a.plannedDate)
+      ),
+    [plannedRecurring, plannedInstallments]
   );
 
   const openCreateModal = () => {
@@ -159,6 +234,9 @@ const HomePage = () => {
 
   const openEditModal = (transaction: Transaction) => {
     if (!canWrite) {
+      return;
+    }
+    if (transaction.type === "transfer" || transaction.installmentPlanId) {
       return;
     }
     setEditing(transaction);
@@ -183,9 +261,74 @@ const HomePage = () => {
       setModalError("");
 
       if (editing) {
-        await updateTransaction(authUid, editing.id, values);
+        await updateTransaction(authUid, editing.id, {
+          type: values.type,
+          paymentMethod: values.paymentMethod,
+          amountCents: values.amountCents,
+          date: values.date,
+          categoryId: values.categoryId,
+          description: values.description,
+          cardId: values.paymentMethod === "card" ? values.cardId : undefined,
+          statementMonthKey:
+            values.paymentMethod === "card" ? values.statementMonthKey : undefined,
+          installmentPlanId: editing.installmentPlanId,
+          installmentNumber: editing.installmentNumber,
+          installmentsTotal: editing.installmentsTotal,
+          sourceType: editing.sourceType,
+          sourceRuleId: editing.sourceRuleId,
+          plannedDate: editing.plannedDate,
+        });
       } else {
-        await createTransaction(authUid, values);
+        if (
+          values.paymentMethod === "card" &&
+          values.installments &&
+          values.installments > 1 &&
+          values.cardId
+        ) {
+          const plan = await createInstallmentPlan(authUid, {
+            cardId: values.cardId,
+            categoryId: values.categoryId ?? "",
+            description: values.description,
+            totalCents: values.amountCents,
+            installments: values.installments,
+            startDate: values.date,
+            startMonthKey: values.date.slice(0, 7),
+          });
+
+          const firstAmount = getInstallmentAmount(
+            values.amountCents,
+            values.installments,
+            1
+          );
+
+          await createTransaction(authUid, {
+            type: values.type,
+            paymentMethod: "card",
+            amountCents: firstAmount,
+            date: values.date,
+            categoryId: values.categoryId,
+            description: values.description,
+            cardId: values.cardId,
+            statementMonthKey: values.statementMonthKey,
+            installmentPlanId: plan.id,
+            installmentNumber: 1,
+            installmentsTotal: values.installments,
+          });
+        } else {
+          await createTransaction(authUid, {
+            type: values.type,
+            paymentMethod: values.paymentMethod,
+            amountCents: values.amountCents,
+            date: values.date,
+            categoryId: values.categoryId,
+            description: values.description,
+            cardId: values.paymentMethod === "card" ? values.cardId : undefined,
+            statementMonthKey:
+              values.paymentMethod === "card"
+                ? values.statementMonthKey
+                : undefined,
+          });
+        }
       }
 
       setModalOpen(false);
@@ -199,6 +342,9 @@ const HomePage = () => {
 
   const handleDelete = async (transaction: Transaction) => {
     if (!authUid || !canWrite) {
+      return;
+    }
+    if (transaction.type === "transfer") {
       return;
     }
 
@@ -221,16 +367,33 @@ const HomePage = () => {
 
     try {
       setPayingId(item.id);
-      await createTransaction(authUid, {
-        direction: item.direction,
-        amountCents: item.amountCents,
-        date: item.plannedDate,
-        categoryId: item.categoryId,
-        description: item.name,
-        sourceType: "recurring",
-        sourceRuleId: item.ruleId,
-        plannedDate: item.plannedDate,
-      });
+      if (item.kind === "recurring") {
+        await createTransaction(authUid, {
+          type: item.direction,
+          paymentMethod: "cash",
+          amountCents: item.amountCents,
+          date: item.plannedDate,
+          categoryId: item.categoryId,
+          description: item.name,
+          sourceType: "recurring",
+          sourceRuleId: item.ruleId,
+          plannedDate: item.plannedDate,
+        });
+      } else {
+        await createTransaction(authUid, {
+          type: item.direction,
+          paymentMethod: "card",
+          amountCents: item.amountCents,
+          date: item.plannedDate,
+          categoryId: item.categoryId,
+          description: item.name,
+          cardId: item.cardId,
+          statementMonthKey: item.statementMonthKey,
+          installmentPlanId: item.planId,
+          installmentNumber: item.installmentNumber,
+          installmentsTotal: item.installmentsTotal,
+        });
+      }
     } catch (err) {
       setError(getFirestoreErrorInfo(err));
     } finally {
@@ -289,12 +452,12 @@ const HomePage = () => {
 
       <Card className="mt-6">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">Previstos</h2>
-            <p className="text-sm text-slate-500">
-              Recorrencias previstas para o mes selecionado.
-            </p>
-          </div>
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Previstos</h2>
+          <p className="text-sm text-slate-500">
+            Recorrencias e parcelas previstas para o mes selecionado.
+          </p>
+        </div>
           <label className="flex items-center gap-2 text-sm text-slate-600">
             <input
               type="checkbox"
@@ -320,6 +483,13 @@ const HomePage = () => {
                 item.direction === "income"
                   ? "bg-emerald-100 text-emerald-700"
                   : "bg-rose-100 text-rose-700";
+              const categoryName =
+                categoriesById.get(item.categoryId)?.name ??
+                (item.categoryId ? "Categoria removida" : "Sem categoria");
+              const cardName =
+                item.kind === "installment"
+                  ? cardsById.get(item.cardId)?.name ?? "Cartao removido"
+                  : null;
 
               return (
                 <div
@@ -334,13 +504,20 @@ const HomePage = () => {
                       <span className={`rounded-full px-2 py-1 text-xs ${badgeStyles}`}>
                         {item.direction === "income" ? "Receita" : "Despesa"}
                       </span>
+                      {item.kind === "installment" ? (
+                        <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">
+                          Parcela {item.installmentNumber}/{item.installmentsTotal}
+                        </span>
+                      ) : null}
                       <span className="text-xs text-slate-500">{item.plannedDate}</span>
                     </div>
                     <p className="text-sm font-semibold text-slate-900">{item.name}</p>
-                    <p className="text-xs text-slate-500">
-                      {categoriesById.get(item.categoryId)?.name ??
-                        "Categoria removida"}
-                    </p>
+                    <p className="text-xs text-slate-500">{categoryName}</p>
+                    {item.kind === "installment" ? (
+                      <p className="text-xs text-slate-500">
+                        Cartao: {cardName} - Fatura {item.statementMonthKey}
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-semibold text-slate-900">
@@ -383,12 +560,26 @@ const HomePage = () => {
         <div className="mt-4 space-y-3">
           {transactions.map((transaction) => {
             const categoryName =
-              categoriesById.get(transaction.categoryId)?.name ||
-              "Categoria removida";
+              categoriesById.get(transaction.categoryId ?? "")?.name ??
+              (transaction.categoryId ? "Categoria removida" : "Sem categoria");
+            const cardName = transaction.cardId
+              ? cardsById.get(transaction.cardId)?.name ?? "Cartao removido"
+              : "";
             const badgeStyles =
-              transaction.direction === "income"
+              transaction.type === "income"
                 ? "bg-emerald-100 text-emerald-700"
-                : "bg-rose-100 text-rose-700";
+                : transaction.type === "expense"
+                  ? "bg-rose-100 text-rose-700"
+                  : "bg-slate-200 text-slate-700";
+            const typeLabel =
+              transaction.type === "transfer"
+                ? "Transferencia"
+                : transaction.type === "income"
+                  ? "Receita"
+                  : "Despesa";
+            const canEditTransaction =
+              canWrite && !transaction.installmentPlanId && transaction.type !== "transfer";
+            const canDeleteTransaction = canWrite && transaction.type !== "transfer";
 
             return (
               <div
@@ -398,18 +589,29 @@ const HomePage = () => {
                 <div className="space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className={`rounded-full px-2 py-1 text-xs ${badgeStyles}`}>
-                      {transaction.direction === "income" ? "Receita" : "Despesa"}
+                      {typeLabel}
                     </span>
                     {transaction.sourceType === "recurring" ? (
                       <span className="rounded-full bg-slate-200 px-2 py-1 text-xs text-slate-700">
                         Recorrente
                       </span>
                     ) : null}
+                    {transaction.installmentPlanId ? (
+                      <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">
+                        Parcela {transaction.installmentNumber ?? 1}/
+                        {transaction.installmentsTotal ?? 1}
+                      </span>
+                    ) : null}
                     <span className="text-xs text-slate-500">{transaction.date}</span>
                   </div>
                   <p className="text-sm font-semibold text-slate-900">
-                    {categoryName}
+                    {transaction.type === "transfer" ? "Pagamento de fatura" : categoryName}
                   </p>
+                  {transaction.paymentMethod === "card" && transaction.cardId ? (
+                    <p className="text-xs text-slate-500">
+                      Cartao: {cardName} - Fatura {transaction.statementMonthKey ?? "-"}
+                    </p>
+                  ) : null}
                   {transaction.description ? (
                     <p className="text-xs text-slate-500">
                       {transaction.description}
@@ -423,7 +625,7 @@ const HomePage = () => {
                   <Button
                     variant="secondary"
                     onClick={() => openEditModal(transaction)}
-                    disabled={!canWrite}
+                    disabled={!canEditTransaction}
                   >
                     Editar
                   </Button>
@@ -431,7 +633,7 @@ const HomePage = () => {
                     variant="secondary"
                     className="border-rose-200 text-rose-600 hover:border-rose-300"
                     onClick={() => handleDelete(transaction)}
-                    disabled={!canWrite}
+                    disabled={!canDeleteTransaction}
                   >
                     Excluir
                   </Button>
@@ -447,14 +649,18 @@ const HomePage = () => {
         title={editing ? "Editar lancamento" : "Novo lancamento"}
         submitLabel={editing ? "Salvar" : "Criar"}
         categories={categories}
+        cards={cards}
         initialValues={
           editing
             ? {
-                direction: editing.direction,
+                type: editing.type === "transfer" ? "expense" : editing.type,
+                paymentMethod: editing.paymentMethod,
                 amountCents: editing.amountCents,
                 date: editing.date,
                 categoryId: editing.categoryId,
                 description: editing.description,
+                cardId: editing.cardId,
+                statementMonthKey: editing.statementMonthKey,
               }
             : undefined
         }
