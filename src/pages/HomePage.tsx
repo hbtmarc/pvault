@@ -19,7 +19,7 @@ import {
   type Transaction,
   buildInstallmentPlannedItems,
   buildPlannedItems,
-  createInstallmentPlan,
+  createCardExpenseWithInstallments,
   createTransaction,
   getFirestoreErrorInfo,
   getFirestoreErrorMessage,
@@ -32,7 +32,7 @@ import {
   removeTransaction,
   updateTransaction,
 } from "../lib/firestore";
-import { formatCurrency, getInstallmentAmount } from "../lib/money";
+import { formatCurrency } from "../lib/money";
 import { useAdmin } from "../providers/AdminProvider";
 
 const HomePage = () => {
@@ -274,6 +274,11 @@ const HomePage = () => {
           installmentPlanId: editing.installmentPlanId,
           installmentNumber: editing.installmentNumber,
           installmentsTotal: editing.installmentsTotal,
+          installmentGroupId: editing.installmentGroupId,
+          installmentIndex: editing.installmentIndex,
+          installmentCount: editing.installmentCount,
+          paidAt: editing.paidAt,
+          paidByStatementId: editing.paidByStatementId,
           sourceType: editing.sourceType,
           sourceRuleId: editing.sourceRuleId,
           plannedDate: editing.plannedDate,
@@ -285,35 +290,22 @@ const HomePage = () => {
           values.installments > 1 &&
           values.cardId
         ) {
-          const plan = await createInstallmentPlan(authUid, {
-            cardId: values.cardId,
-            categoryId: values.categoryId ?? "",
-            description: values.description,
-            totalCents: values.amountCents,
-            installments: values.installments,
-            startDate: values.date,
-            startMonthKey: values.date.slice(0, 7),
-          });
-
-          const firstAmount = getInstallmentAmount(
-            values.amountCents,
-            values.installments,
-            1
+          const card = cards.find((item) => item.id === values.cardId);
+          if (!card) {
+            setModalError("Selecione um cartao valido.");
+            return;
+          }
+          await createCardExpenseWithInstallments(
+            authUid,
+            {
+              amountCents: values.amountCents,
+              date: values.date,
+              categoryId: values.categoryId ?? "",
+              description: values.description,
+            },
+            card,
+            values.installments
           );
-
-          await createTransaction(authUid, {
-            type: values.type,
-            paymentMethod: "card",
-            amountCents: firstAmount,
-            date: values.date,
-            categoryId: values.categoryId,
-            description: values.description,
-            cardId: values.cardId,
-            statementMonthKey: values.statementMonthKey,
-            installmentPlanId: plan.id,
-            installmentNumber: 1,
-            installmentsTotal: values.installments,
-          });
         } else {
           await createTransaction(authUid, {
             type: values.type,
@@ -581,9 +573,18 @@ const HomePage = () => {
                 : transaction.type === "income"
                   ? "Receita"
                   : "Despesa";
+            const hasInstallment =
+              transaction.installmentGroupId ||
+              transaction.installmentPlanId ||
+              transaction.installmentIndex ||
+              transaction.installmentNumber;
+            const installmentIndex =
+              transaction.installmentIndex ?? transaction.installmentNumber ?? 1;
+            const installmentCount =
+              transaction.installmentCount ?? transaction.installmentsTotal ?? 1;
             const canEditTransaction =
               canWrite &&
-              !transaction.installmentPlanId &&
+              !hasInstallment &&
               transaction.type !== "transfer" &&
               !(transaction.paymentMethod === "card" && isArchivedCard);
             const canDeleteTransaction = canWrite && transaction.type !== "transfer";
@@ -603,10 +604,14 @@ const HomePage = () => {
                         Recorrente
                       </span>
                     ) : null}
-                    {transaction.installmentPlanId ? (
+                    {hasInstallment ? (
                       <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">
-                        Parcela {transaction.installmentNumber ?? 1}/
-                        {transaction.installmentsTotal ?? 1}
+                        Parcela {installmentIndex}/{installmentCount}
+                      </span>
+                    ) : null}
+                    {transaction.paidAt ? (
+                      <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
+                        Pago
                       </span>
                     ) : null}
                     <span className="text-xs text-slate-500">{transaction.date}</span>

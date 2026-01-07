@@ -4,20 +4,23 @@ import Button from "../components/Button";
 import Card from "../components/Card";
 import ErrorBanner from "../components/ErrorBanner";
 import MonthSelector from "../components/MonthSelector";
-import { getMonthKey, getDueDateISO } from "../lib/date";
+import { getMonthKey, getDueDateISO, shiftMonthKey } from "../lib/date";
 import {
   type Card as CardType,
   type Category,
   type FirestoreErrorInfo,
   type StatementPayment,
   type Transaction,
+  clearStatementItemsPaid,
   createTransaction,
   deleteStatementPayment,
+  fetchStatementTotal,
   getFirestoreErrorInfo,
   listCardTransactionsByStatement,
   listCards,
   listCategories,
   listenStatementPayment,
+  markStatementItemsPaid,
   removeTransaction,
   upsertStatementPayment,
 } from "../lib/firestore";
@@ -42,6 +45,9 @@ const StatementsPage = () => {
   const [paymentNotes, setPaymentNotes] = useState("");
   const [modalError, setModalError] = useState("");
   const [error, setError] = useState<FirestoreErrorInfo | null>(null);
+  const [summaryTotals, setSummaryTotals] = useState<
+    Array<{ monthKey: string; totalCents: number }>
+  >([]);
 
   useEffect(() => {
     if (!effectiveUid) {
@@ -110,6 +116,27 @@ const StatementsPage = () => {
     );
 
     return () => unsubscribe();
+  }, [effectiveUid, selectedCardId, monthKey]);
+
+  useEffect(() => {
+    if (!effectiveUid || !selectedCardId) {
+      setSummaryTotals([]);
+      return;
+    }
+
+    const totalMonths = 6;
+    const monthKeys = Array.from({ length: totalMonths }, (_, index) =>
+      shiftMonthKey(monthKey, index)
+    );
+
+    Promise.all(
+      monthKeys.map(async (key) => ({
+        monthKey: key,
+        totalCents: await fetchStatementTotal(effectiveUid, selectedCardId, key),
+      }))
+    )
+      .then((items) => setSummaryTotals(items))
+      .catch((err) => setError(getFirestoreErrorInfo(err)));
   }, [effectiveUid, selectedCardId, monthKey]);
 
   useEffect(() => {
@@ -205,10 +232,19 @@ const StatementsPage = () => {
 
       await upsertStatementPayment(authUid, selectedCard.id, monthKey, {
         paidAt: paymentDate,
-        paymentTransactionId: tx.id,
-        totalCentsSnapshot: statementTotal,
+        paidAmountCents: statementTotal,
+        paymentTxId: tx.id,
+        snapshotTotalCents: statementTotal,
         notes: paymentNotes.trim() ? paymentNotes.trim() : undefined,
       });
+
+      await markStatementItemsPaid(
+        authUid,
+        selectedCard.id,
+        monthKey,
+        paymentDate,
+        `${selectedCard.id}_${monthKey}`
+      );
 
       setModalOpen(false);
     } catch (err) {
@@ -230,10 +266,11 @@ const StatementsPage = () => {
 
     try {
       setUnpaying(true);
-      if (statement?.paymentTransactionId) {
-        await removeTransaction(authUid, statement.paymentTransactionId);
+      if (statement?.paymentTxId) {
+        await removeTransaction(authUid, statement.paymentTxId);
       }
       await deleteStatementPayment(authUid, selectedCard.id, monthKey);
+      await clearStatementItemsPaid(authUid, selectedCard.id, monthKey);
     } catch (err) {
       setError(getFirestoreErrorInfo(err));
     } finally {
@@ -274,6 +311,32 @@ const StatementsPage = () => {
           </p>
         </Card>
       ) : (
+        <>
+          <Card className="mt-6">
+            <h2 className="text-lg font-semibold text-slate-900">Resumo das faturas</h2>
+            <p className="text-sm text-slate-500">
+              Total do mes atual e proximos 5 meses.
+            </p>
+
+            {summaryTotals.length === 0 ? (
+              <p className="mt-4 text-sm text-slate-500">Carregando resumo...</p>
+            ) : null}
+
+            <div className="mt-4 space-y-2">
+              {summaryTotals.map((item) => (
+                <div
+                  key={item.monthKey}
+                  className="flex items-center justify-between text-sm text-slate-700"
+                >
+                  <span>{item.monthKey}</span>
+                  <span className="font-semibold text-slate-900">
+                    {formatCurrency(item.totalCents)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </Card>
+
         <Card className="mt-6">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
@@ -346,6 +409,15 @@ const StatementsPage = () => {
                 transaction.type === "income"
                   ? "bg-emerald-100 text-emerald-700"
                   : "bg-rose-100 text-rose-700";
+              const hasInstallment =
+                transaction.installmentGroupId ||
+                transaction.installmentPlanId ||
+                transaction.installmentIndex ||
+                transaction.installmentNumber;
+              const installmentIndex =
+                transaction.installmentIndex ?? transaction.installmentNumber ?? 1;
+              const installmentCount =
+                transaction.installmentCount ?? transaction.installmentsTotal ?? 1;
 
               return (
                 <div
@@ -357,10 +429,14 @@ const StatementsPage = () => {
                       <span className={`rounded-full px-2 py-1 text-xs ${badgeStyles}`}>
                         {transaction.type === "income" ? "Receita" : "Despesa"}
                       </span>
-                      {transaction.installmentPlanId ? (
+                      {hasInstallment ? (
                         <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">
-                          Parcela {transaction.installmentNumber ?? 1}/
-                          {transaction.installmentsTotal ?? 1}
+                          Parcela {installmentIndex}/{installmentCount}
+                        </span>
+                      ) : null}
+                      {transaction.paidAt ? (
+                        <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
+                          Pago
                         </span>
                       ) : null}
                       <span className="text-xs text-slate-500">{transaction.date}</span>
@@ -382,6 +458,7 @@ const StatementsPage = () => {
             })}
           </div>
         </Card>
+        </>
       )}
 
       {modalOpen ? (

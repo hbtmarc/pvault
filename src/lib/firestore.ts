@@ -5,6 +5,7 @@ import {
   deleteDoc,
   deleteField,
   doc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
@@ -12,6 +13,7 @@ import {
   setDoc,
   updateDoc,
   where,
+  writeBatch,
 } from "firebase/firestore";
 import {
   addMonthsToDateISO,
@@ -20,7 +22,7 @@ import {
   lastDayOfMonth,
 } from "./date";
 import { db } from "./firebase";
-import { getInstallmentAmount } from "./money";
+import { getInstallmentAmount, splitCentsEven } from "./money";
 
 export type Direction = "income" | "expense";
 
@@ -54,9 +56,14 @@ export type Transaction = {
   paymentKind?: PaymentKind;
   cardId?: string;
   statementMonthKey?: string;
+  installmentGroupId?: string;
+  installmentIndex?: number;
+  installmentCount?: number;
   installmentPlanId?: string;
   installmentNumber?: number;
   installmentsTotal?: number;
+  paidAt?: string;
+  paidByStatementId?: string;
   sourceType?: TransactionSourceType;
   sourceRuleId?: string;
   plannedDate?: string;
@@ -115,8 +122,9 @@ export type StatementPayment = {
   cardId: string;
   statementMonthKey: string;
   paidAt: string;
-  paymentTransactionId?: string;
-  totalCentsSnapshot: number;
+  paidAmountCents: number;
+  paymentTxId?: string;
+  snapshotTotalCents: number;
   notes?: string;
   createdAt?: unknown;
   updatedAt?: unknown;
@@ -185,9 +193,14 @@ type TransactionInput = {
   paymentKind?: PaymentKind;
   cardId?: string;
   statementMonthKey?: string;
+  installmentGroupId?: string;
+  installmentIndex?: number;
+  installmentCount?: number;
   installmentPlanId?: string;
   installmentNumber?: number;
   installmentsTotal?: number;
+  paidAt?: string;
+  paidByStatementId?: string;
   sourceType?: TransactionSourceType;
   sourceRuleId?: string;
   plannedDate?: string;
@@ -508,9 +521,14 @@ export const listTransactionsByMonth = (
           paymentKind: (data.paymentKind as PaymentKind) ?? undefined,
           cardId: (data.cardId as string) ?? undefined,
           statementMonthKey: (data.statementMonthKey as string) ?? undefined,
+          installmentGroupId: (data.installmentGroupId as string) ?? undefined,
+          installmentIndex: (data.installmentIndex as number) ?? undefined,
+          installmentCount: (data.installmentCount as number) ?? undefined,
           installmentPlanId: (data.installmentPlanId as string) ?? undefined,
           installmentNumber: (data.installmentNumber as number) ?? undefined,
           installmentsTotal: (data.installmentsTotal as number) ?? undefined,
+          paidAt: (data.paidAt as string) ?? undefined,
+          paidByStatementId: (data.paidByStatementId as string) ?? undefined,
           sourceType: data.sourceType as TransactionSourceType | undefined,
           sourceRuleId: (data.sourceRuleId as string) ?? undefined,
           plannedDate: (data.plannedDate as string) ?? undefined,
@@ -554,6 +572,15 @@ export const createTransaction = async (uid: string, data: TransactionInput) => 
   if (data.paymentKind) {
     payload.paymentKind = data.paymentKind;
   }
+  if (data.installmentGroupId) {
+    payload.installmentGroupId = data.installmentGroupId;
+  }
+  if (data.installmentIndex) {
+    payload.installmentIndex = data.installmentIndex;
+  }
+  if (data.installmentCount) {
+    payload.installmentCount = data.installmentCount;
+  }
   if (data.categoryId) {
     payload.categoryId = data.categoryId;
   }
@@ -562,6 +589,12 @@ export const createTransaction = async (uid: string, data: TransactionInput) => 
   }
   if (data.statementMonthKey) {
     payload.statementMonthKey = data.statementMonthKey;
+  }
+  if (data.paidAt) {
+    payload.paidAt = data.paidAt;
+  }
+  if (data.paidByStatementId) {
+    payload.paidByStatementId = data.paidByStatementId;
   }
   if (data.installmentPlanId) {
     payload.installmentPlanId = data.installmentPlanId;
@@ -616,6 +649,19 @@ export const updateTransaction = async (
   if (data.paymentKind !== undefined) {
     payload.paymentKind = data.paymentKind ? data.paymentKind : deleteField();
   }
+  if (data.installmentGroupId !== undefined) {
+    payload.installmentGroupId = data.installmentGroupId
+      ? data.installmentGroupId
+      : deleteField();
+  }
+  if (data.installmentIndex !== undefined) {
+    payload.installmentIndex =
+      data.installmentIndex !== undefined ? data.installmentIndex : deleteField();
+  }
+  if (data.installmentCount !== undefined) {
+    payload.installmentCount =
+      data.installmentCount !== undefined ? data.installmentCount : deleteField();
+  }
   if (data.categoryId) {
     payload.categoryId = data.categoryId;
   } else {
@@ -630,6 +676,14 @@ export const updateTransaction = async (
     payload.statementMonthKey = data.statementMonthKey;
   } else {
     payload.statementMonthKey = deleteField();
+  }
+  if (data.paidAt !== undefined) {
+    payload.paidAt = data.paidAt ? data.paidAt : deleteField();
+  }
+  if (data.paidByStatementId !== undefined) {
+    payload.paidByStatementId = data.paidByStatementId
+      ? data.paidByStatementId
+      : deleteField();
   }
   if (data.installmentPlanId) {
     payload.installmentPlanId = data.installmentPlanId;
@@ -732,9 +786,14 @@ export const listCardTransactionsByStatement = (
             paymentKind: (data.paymentKind as PaymentKind) ?? undefined,
             cardId: (data.cardId as string) ?? undefined,
             statementMonthKey: (data.statementMonthKey as string) ?? undefined,
+            installmentGroupId: (data.installmentGroupId as string) ?? undefined,
+            installmentIndex: (data.installmentIndex as number) ?? undefined,
+            installmentCount: (data.installmentCount as number) ?? undefined,
             installmentPlanId: (data.installmentPlanId as string) ?? undefined,
             installmentNumber: (data.installmentNumber as number) ?? undefined,
             installmentsTotal: (data.installmentsTotal as number) ?? undefined,
+            paidAt: (data.paidAt as string) ?? undefined,
+            paidByStatementId: (data.paidByStatementId as string) ?? undefined,
             sourceType: data.sourceType as TransactionSourceType | undefined,
             sourceRuleId: (data.sourceRuleId as string) ?? undefined,
             plannedDate: (data.plannedDate as string) ?? undefined,
@@ -804,9 +863,14 @@ export const listCardTransactionsByStatementMonth = (
           paymentKind: (data.paymentKind as PaymentKind) ?? undefined,
           cardId: (data.cardId as string) ?? undefined,
           statementMonthKey: (data.statementMonthKey as string) ?? undefined,
+          installmentGroupId: (data.installmentGroupId as string) ?? undefined,
+          installmentIndex: (data.installmentIndex as number) ?? undefined,
+          installmentCount: (data.installmentCount as number) ?? undefined,
           installmentPlanId: (data.installmentPlanId as string) ?? undefined,
           installmentNumber: (data.installmentNumber as number) ?? undefined,
           installmentsTotal: (data.installmentsTotal as number) ?? undefined,
+          paidAt: (data.paidAt as string) ?? undefined,
+          paidByStatementId: (data.paidByStatementId as string) ?? undefined,
           sourceType: data.sourceType as TransactionSourceType | undefined,
           sourceRuleId: (data.sourceRuleId as string) ?? undefined,
           plannedDate: (data.plannedDate as string) ?? undefined,
@@ -825,6 +889,181 @@ export const listCardTransactionsByStatementMonth = (
       onError?.(error);
     }
   );
+};
+
+export const fetchStatementTotal = async (
+  uid: string,
+  cardId: string,
+  statementMonthKey: string
+) => {
+  ensureUid(uid);
+  const path = `users/${uid}/transactions`;
+
+  logDev("[firestore] fetchStatementTotal", { uid, path, cardId, statementMonthKey });
+
+  const statementQuery = query(
+    transactionsCollection(uid),
+    where("cardId", "==", cardId),
+    where("statementMonthKey", "==", statementMonthKey),
+    where("paymentMethod", "==", "card")
+  );
+
+  const snapshot = await getDocs(statementQuery);
+  return snapshot.docs.reduce((sum, item) => {
+    const data = item.data();
+    const rawType =
+      (data.type as TransactionType) ??
+      (data.direction as Direction) ??
+      "expense";
+    const amount = (data.amountCents as number) ?? 0;
+    if (rawType === "income") {
+      return sum - amount;
+    }
+    if (rawType === "expense") {
+      return sum + amount;
+    }
+    return sum;
+  }, 0);
+};
+
+export const createCardExpenseWithInstallments = async (
+  uid: string,
+  base: {
+    amountCents: number;
+    date: string;
+    categoryId: string;
+    description?: string;
+  },
+  card: Card,
+  installmentsCount: number
+) => {
+  ensureUid(uid);
+  if (installmentsCount <= 1) {
+    throw new Error("installmentsCount must be greater than 1");
+  }
+
+  const groupId = doc(transactionsCollection(uid)).id;
+  const amounts = splitCentsEven(base.amountCents, installmentsCount);
+  const batch = writeBatch(db);
+  const ids: string[] = [];
+
+  for (let index = 0; index < installmentsCount; index += 1) {
+    const installmentIndex = index + 1;
+    const installmentDate = addMonthsToDateISO(base.date, index);
+    const monthKey = getMonthKeyFromDateISO(installmentDate);
+    const statementMonthKey = getStatementMonthKey(
+      installmentDate,
+      card.closingDay
+    );
+    const ref = doc(transactionsCollection(uid));
+    ids.push(ref.id);
+
+    batch.set(ref, {
+      type: "expense",
+      paymentMethod: "card",
+      amountCents: amounts[index] ?? 0,
+      date: installmentDate,
+      monthKey,
+      categoryId: base.categoryId,
+      description: base.description?.trim() || "",
+      cardId: card.id,
+      statementMonthKey,
+      installmentGroupId: groupId,
+      installmentIndex,
+      installmentCount: installmentsCount,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  await batch.commit();
+  return { groupId, transactionIds: ids };
+};
+
+export const markStatementItemsPaid = async (
+  uid: string,
+  cardId: string,
+  statementMonthKey: string,
+  paidAt: string,
+  statementId: string
+) => {
+  ensureUid(uid);
+  const path = `users/${uid}/transactions`;
+  const statementQuery = query(
+    transactionsCollection(uid),
+    where("cardId", "==", cardId),
+    where("statementMonthKey", "==", statementMonthKey),
+    where("paymentMethod", "==", "card")
+  );
+
+  const snapshot = await getDocs(statementQuery);
+  const docs = snapshot.docs;
+  const chunkSize = 300;
+
+  logDev("[firestore] markStatementItemsPaid", {
+    uid,
+    path,
+    cardId,
+    statementMonthKey,
+    total: docs.length,
+  });
+
+  for (let start = 0; start < docs.length; start += chunkSize) {
+    const batch = writeBatch(db);
+    const slice = docs.slice(start, start + chunkSize);
+    slice.forEach((item) => {
+      batch.update(item.ref, {
+        paidAt,
+        paidByStatementId: statementId,
+        updatedAt: serverTimestamp(),
+      });
+    });
+    await batch.commit();
+  }
+
+  return docs.length;
+};
+
+export const clearStatementItemsPaid = async (
+  uid: string,
+  cardId: string,
+  statementMonthKey: string
+) => {
+  ensureUid(uid);
+  const path = `users/${uid}/transactions`;
+  const statementQuery = query(
+    transactionsCollection(uid),
+    where("cardId", "==", cardId),
+    where("statementMonthKey", "==", statementMonthKey),
+    where("paymentMethod", "==", "card")
+  );
+
+  const snapshot = await getDocs(statementQuery);
+  const docs = snapshot.docs;
+  const chunkSize = 300;
+
+  logDev("[firestore] clearStatementItemsPaid", {
+    uid,
+    path,
+    cardId,
+    statementMonthKey,
+    total: docs.length,
+  });
+
+  for (let start = 0; start < docs.length; start += chunkSize) {
+    const batch = writeBatch(db);
+    const slice = docs.slice(start, start + chunkSize);
+    slice.forEach((item) => {
+      batch.update(item.ref, {
+        paidAt: deleteField(),
+        paidByStatementId: deleteField(),
+        updatedAt: serverTimestamp(),
+      });
+    });
+    await batch.commit();
+  }
+
+  return docs.length;
 };
 
 export const createInstallmentPlan = async (
@@ -981,14 +1220,23 @@ export const listenStatementPayment = (
       }
 
       const data = snapshot.data();
+      const snapshotTotal =
+        (data.snapshotTotalCents as number) ??
+        (data.totalCentsSnapshot as number) ??
+        0;
+      const paymentTxId =
+        (data.paymentTxId as string) ??
+        (data.paymentTransactionId as string) ??
+        undefined;
       onChange({
         id: snapshot.id,
         cardId: (data.cardId as string) ?? cardId,
         statementMonthKey:
           (data.statementMonthKey as string) ?? statementMonthKey,
         paidAt: (data.paidAt as string) ?? "",
-        paymentTransactionId: (data.paymentTransactionId as string) ?? undefined,
-        totalCentsSnapshot: (data.totalCentsSnapshot as number) ?? 0,
+        paidAmountCents: (data.paidAmountCents as number) ?? snapshotTotal,
+        paymentTxId,
+        snapshotTotalCents: snapshotTotal,
         notes: (data.notes as string) ?? "",
         createdAt: data.createdAt,
         updatedAt: data.updatedAt,
@@ -1013,8 +1261,9 @@ export const upsertStatementPayment = async (
   statementMonthKey: string,
   payload: {
     paidAt: string;
-    paymentTransactionId: string;
-    totalCentsSnapshot: number;
+    paidAmountCents: number;
+    paymentTxId: string;
+    snapshotTotalCents: number;
     notes?: string;
   }
 ) => {
@@ -1028,8 +1277,9 @@ export const upsertStatementPayment = async (
     cardId,
     statementMonthKey,
     paidAt: payload.paidAt,
-    paymentTransactionId: payload.paymentTransactionId,
-    totalCentsSnapshot: payload.totalCentsSnapshot,
+    paidAmountCents: payload.paidAmountCents,
+    paymentTxId: payload.paymentTxId,
+    snapshotTotalCents: payload.snapshotTotalCents,
     updatedAt: serverTimestamp(),
     createdAt: serverTimestamp(),
   };

@@ -63,3 +63,15 @@ export const getInstallmentAmount = (
   const remainder = totalCents % installments;
   return base + (installmentNumber <= remainder ? 1 : 0);
 };
+
+export const splitCentsEven = (totalCents: number, count: number) => {
+  if (count <= 0) {
+    return [];
+  }
+
+  const base = Math.floor(totalCents / count);
+  const remainder = totalCents % count;
+  return Array.from({ length: count }, (_, index) =>
+    base + (index < remainder ? 1 : 0)
+  );
+};
