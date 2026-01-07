@@ -1,4 +1,11 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useSearchParams } from "react-router-dom";
 
 type MonthContextValue = {
@@ -37,58 +44,72 @@ function addMonthsToMonthKey(monthKey: string, delta: number): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
 }
 
+function resolveInitialMonthKey(urlM: string) {
+  if (isValidMonthKey(urlM)) {
+    return urlM;
+  }
+
+  if (typeof window !== "undefined") {
+    const fromStorage = window.localStorage.getItem(STORAGE_KEY);
+    if (isValidMonthKey(fromStorage)) {
+      return fromStorage;
+    }
+  }
+
+  return nowMonthKey();
+}
+
 export function MonthProvider({ children }: { children: React.ReactNode }) {
   const [searchParams, setSearchParams] = useSearchParams();
-
-  // 1) Fonte inicial (prioridade): URL ?m=  -> localStorage -> mês atual
-  const initial = useMemo(() => {
-    const fromUrl = searchParams.get("m");
-    if (isValidMonthKey(fromUrl)) return fromUrl;
-
-    const fromStorage = localStorage.getItem(STORAGE_KEY);
-    if (isValidMonthKey(fromStorage)) return fromStorage;
-
-    return nowMonthKey();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // intencional: calcular só 1x no mount
-
-  const [monthKey, _setMonthKey] = useState<string>(initial);
+  const urlM = searchParams.get("m") ?? "";
+  const [monthKey, setMonthKeyState] = useState<string>(() =>
+    resolveInitialMonthKey(urlM)
+  );
 
   const setMonthKey = useCallback((next: string) => {
     if (!isValidMonthKey(next)) return;
-    _setMonthKey((prev) => (prev === next ? prev : next));
+    setMonthKeyState((prev) => (prev === next ? prev : next));
   }, []);
 
   const prevMonth = useCallback(() => {
-    _setMonthKey((prev) => addMonthsToMonthKey(prev, -1));
+    setMonthKeyState((prev) => addMonthsToMonthKey(prev, -1));
   }, []);
 
   const nextMonth = useCallback(() => {
-    _setMonthKey((prev) => addMonthsToMonthKey(prev, +1));
+    setMonthKeyState((prev) => addMonthsToMonthKey(prev, +1));
   }, []);
 
-  // 2) URL -> STATE (só atualiza state se realmente mudou)
+  // URL -> State
   useEffect(() => {
-    const fromUrl = searchParams.get("m");
-    if (!isValidMonthKey(fromUrl)) return;
-    _setMonthKey((prev) => (prev === fromUrl ? prev : fromUrl));
-  }, [searchParams]);
+    if (!isValidMonthKey(urlM)) return;
+    if (urlM !== monthKey) {
+      setMonthKey(urlM);
+    }
+  }, [urlM, monthKey, setMonthKey]);
 
-  // 3) STATE -> URL (idempotente; usa replace para não “spammar” history)
+  // State -> URL
   useEffect(() => {
-    const current = searchParams.get("m");
-    if (current === monthKey) return; // GUARD CRÍTICO (evita loop)
+    if (!isValidMonthKey(monthKey)) return;
+    if (urlM === monthKey) return;
 
-    const next = new URLSearchParams(searchParams);
-    next.set("m", monthKey);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (next.get("m") === monthKey) {
+          return prev;
+        }
+        next.set("m", monthKey);
+        return next;
+      },
+      { replace: true }
+    );
+  }, [monthKey, urlM, setSearchParams]);
 
-    // replace: não cria entradas infinitas no histórico
-    setSearchParams(next, { replace: true });
-  }, [monthKey, searchParams, setSearchParams]);
-
-  // 4) Persistência local (para quando a URL não vier com ?m)
+  // Persist locally
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, monthKey);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(STORAGE_KEY, monthKey);
+    }
   }, [monthKey]);
 
   const value = useMemo<MonthContextValue>(
