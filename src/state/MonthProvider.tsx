@@ -1,87 +1,106 @@
-import {
-  type ReactNode,
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
-import { useLocation, useNavigate } from "react-router-dom";
-import { getMonthKey, isValidMonthKey } from "../lib/date";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 type MonthContextValue = {
-  monthKey: string;
-  setMonthKey: (monthKey: string) => void;
+  monthKey: string; // YYYY-MM
+  setMonthKey: (next: string) => void;
+  prevMonth: () => void;
+  nextMonth: () => void;
 };
 
-const MonthContext = createContext<MonthContextValue | undefined>(undefined);
+const MonthContext = createContext<MonthContextValue | null>(null);
 
 const STORAGE_KEY = "pvault.monthKey";
 
-const readMonthKeyFromSearch = (search: string) => {
-  const params = new URLSearchParams(search);
-  const value = params.get("m");
-  return isValidMonthKey(value) ? value : null;
-};
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
+}
 
-export const MonthProvider = ({ children }: { children: ReactNode }) => {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const [monthKey, setMonthKeyState] = useState(() => {
-    const fromSearch = readMonthKeyFromSearch(location.search);
-    if (fromSearch) {
-      return fromSearch;
-    }
+function isValidMonthKey(v: string | null | undefined): v is string {
+  if (!v) return false;
+  if (!/^\d{4}-\d{2}$/.test(v)) return false;
+  const [, mm] = v.split("-");
+  const m = Number(mm);
+  return m >= 1 && m <= 12;
+}
 
-    if (typeof window !== "undefined") {
-      const stored = window.localStorage.getItem(STORAGE_KEY);
-      if (isValidMonthKey(stored)) {
-        return stored as string;
-      }
-    }
+function nowMonthKey(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+}
 
-    return getMonthKey(new Date());
-  });
+function addMonthsToMonthKey(monthKey: string, delta: number): string {
+  const [yy, mm] = monthKey.split("-");
+  const y = Number(yy);
+  const m = Number(mm);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+}
 
+export function MonthProvider({ children }: { children: React.ReactNode }) {
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // 1) Fonte inicial (prioridade): URL ?m=  -> localStorage -> mês atual
+  const initial = useMemo(() => {
+    const fromUrl = searchParams.get("m");
+    if (isValidMonthKey(fromUrl)) return fromUrl;
+
+    const fromStorage = localStorage.getItem(STORAGE_KEY);
+    if (isValidMonthKey(fromStorage)) return fromStorage;
+
+    return nowMonthKey();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intencional: calcular só 1x no mount
+
+  const [monthKey, _setMonthKey] = useState<string>(initial);
+
+  const setMonthKey = useCallback((next: string) => {
+    if (!isValidMonthKey(next)) return;
+    _setMonthKey((prev) => (prev === next ? prev : next));
+  }, []);
+
+  const prevMonth = useCallback(() => {
+    _setMonthKey((prev) => addMonthsToMonthKey(prev, -1));
+  }, []);
+
+  const nextMonth = useCallback(() => {
+    _setMonthKey((prev) => addMonthsToMonthKey(prev, +1));
+  }, []);
+
+  // 2) URL -> STATE (só atualiza state se realmente mudou)
   useEffect(() => {
-    const fromSearch = readMonthKeyFromSearch(location.search);
-    if (fromSearch && fromSearch !== monthKey) {
-      setMonthKeyState(fromSearch);
-    }
-  }, [location.search, monthKey]);
+    const fromUrl = searchParams.get("m");
+    if (!isValidMonthKey(fromUrl)) return;
+    _setMonthKey((prev) => (prev === fromUrl ? prev : fromUrl));
+  }, [searchParams]);
 
-  const setMonthKey = (value: string) => {
-    if (!isValidMonthKey(value)) {
-      return;
-    }
-    setMonthKeyState(value);
-  };
-
+  // 3) STATE -> URL (idempotente; usa replace para não “spammar” history)
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(STORAGE_KEY, monthKey);
-    }
+    const current = searchParams.get("m");
+    if (current === monthKey) return; // GUARD CRÍTICO (evita loop)
 
-    const params = new URLSearchParams(location.search);
-    if (params.get("m") !== monthKey) {
-      params.set("m", monthKey);
-      const search = params.toString();
-      navigate(
-        { pathname: location.pathname, search: search ? `?${search}` : "" },
-        { replace: true }
-      );
-    }
-  }, [location.pathname, location.search, monthKey, navigate]);
+    const next = new URLSearchParams(searchParams);
+    next.set("m", monthKey);
 
-  const value = useMemo(() => ({ monthKey, setMonthKey }), [monthKey]);
+    // replace: não cria entradas infinitas no histórico
+    setSearchParams(next, { replace: true });
+  }, [monthKey, searchParams, setSearchParams]);
+
+  // 4) Persistência local (para quando a URL não vier com ?m)
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, monthKey);
+  }, [monthKey]);
+
+  const value = useMemo<MonthContextValue>(
+    () => ({ monthKey, setMonthKey, prevMonth, nextMonth }),
+    [monthKey, setMonthKey, prevMonth, nextMonth]
+  );
 
   return <MonthContext.Provider value={value}>{children}</MonthContext.Provider>;
-};
+}
 
-export const useMonthContext = () => {
-  const context = useContext(MonthContext);
-  if (!context) {
-    throw new Error("useMonthContext must be used within MonthProvider");
-  }
-  return context;
-};
+export function useMonth() {
+  const ctx = useContext(MonthContext);
+  if (!ctx) throw new Error("useMonth must be used within MonthProvider");
+  return ctx;
+}
