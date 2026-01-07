@@ -5,15 +5,23 @@ import {
   deleteDoc,
   deleteField,
   doc,
+  getDoc,
   getDocs,
+  limit,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
+  startAfter,
   updateDoc,
   where,
   writeBatch,
+  type DocumentData,
+  type QueryDocumentSnapshot,
+  type Query,
+  type QuerySnapshot,
+  Timestamp,
 } from "firebase/firestore";
 import {
   addMonthsToDateISO,
@@ -136,6 +144,25 @@ export type UserProfile = {
   email?: string;
   createdAt?: unknown;
   lastSeenAt?: unknown;
+};
+
+export type BackupDoc = {
+  id: string;
+  data: Record<string, unknown>;
+};
+
+export type BackupPayload = {
+  schemaVersion: number;
+  exportedAt: string;
+  appVersion?: string;
+  userProfile: BackupDoc | null;
+  collections: Record<string, BackupDoc[]>;
+};
+
+export type BackupProgress = {
+  stage: "read" | "write" | "delete";
+  collection: string;
+  processed: number;
 };
 
 export type PlannedRecurringItem = {
@@ -268,6 +295,21 @@ const logDev = (message: string, details: Record<string, unknown>) => {
     console.debug(message, details);
   }
 };
+
+const BACKUP_SCHEMA_VERSION = 1;
+const READ_PAGE_SIZE = 400;
+const WRITE_BATCH_SIZE = 450;
+
+const ADMIN_COLLECTIONS = [
+  "categories",
+  "transactions",
+  "budgets",
+  "recurringRules",
+  "cards",
+  "statements",
+  "installmentPlans",
+  "cardStatements",
+];
 
 export const listCategories = (
   uid: string,
@@ -1613,6 +1655,242 @@ export const listUserProfiles = (
       onError?.(error);
     }
   );
+};
+
+const isSafeCollectionName = (value: string) => /^[a-zA-Z0-9_-]+$/.test(value);
+
+const serializeFirestoreValue = (value: unknown): unknown => {
+  if (value instanceof Timestamp) {
+    return value.toDate().toISOString();
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => serializeFirestoreValue(item));
+  }
+
+  if (value && typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    Object.entries(value as Record<string, unknown>).forEach(([key, item]) => {
+      result[key] = serializeFirestoreValue(item);
+    });
+    return result;
+  }
+
+  return value;
+};
+
+const serializeFirestoreData = (data: Record<string, unknown>) =>
+  serializeFirestoreValue(data) as Record<string, unknown>;
+
+const normalizeBackupDocs = (value: unknown): BackupDoc[] => {
+  if (!value) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (!item || typeof item !== "object") {
+          return null;
+        }
+        const record = item as BackupDoc;
+        const id = record.id ? String(record.id) : "";
+        const data =
+          record.data && typeof record.data === "object"
+            ? (record.data as Record<string, unknown>)
+            : {};
+        return id ? { id, data } : null;
+      })
+      .filter((item): item is BackupDoc => Boolean(item));
+  }
+
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([id, data]) => {
+        if (!id) {
+          return null;
+        }
+        const normalized =
+          data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+        return { id, data: normalized };
+      })
+      .filter((item): item is BackupDoc => Boolean(item));
+  }
+
+  return [];
+};
+
+const paginateCollectionDocs = async (
+  uid: string,
+  collectionName: string,
+  pageSize: number,
+  onPage: (docs: QueryDocumentSnapshot<DocumentData>[]) => Promise<void>
+) => {
+  const colRef = collection(db, "users", uid, collectionName);
+  let lastDoc: QueryDocumentSnapshot<DocumentData> | null = null;
+
+  while (true) {
+    const pageQuery: Query<DocumentData> = lastDoc
+      ? query(colRef, orderBy("__name__"), startAfter(lastDoc), limit(pageSize))
+      : query(colRef, orderBy("__name__"), limit(pageSize));
+    const snapshot: QuerySnapshot<DocumentData> = await getDocs(pageQuery);
+    if (snapshot.empty) {
+      break;
+    }
+    await onPage(snapshot.docs);
+    lastDoc = snapshot.docs[snapshot.docs.length - 1];
+    if (snapshot.docs.length < pageSize) {
+      break;
+    }
+  }
+};
+
+const readCollectionDocs = async (
+  uid: string,
+  collectionName: string,
+  onProgress?: (progress: BackupProgress) => void
+) => {
+  const docs: BackupDoc[] = [];
+  await paginateCollectionDocs(uid, collectionName, READ_PAGE_SIZE, async (page) => {
+    page.forEach((docSnap) => {
+      const data = serializeFirestoreData(
+        docSnap.data() as Record<string, unknown>
+      );
+      docs.push({ id: docSnap.id, data });
+    });
+    onProgress?.({ stage: "read", collection: collectionName, processed: docs.length });
+  });
+  return docs;
+};
+
+const writeCollectionDocs = async (
+  uid: string,
+  collectionName: string,
+  docs: BackupDoc[],
+  merge: boolean,
+  onProgress?: (progress: BackupProgress) => void
+) => {
+  if (docs.length === 0) {
+    onProgress?.({ stage: "write", collection: collectionName, processed: 0 });
+    return 0;
+  }
+
+  const colRef = collection(db, "users", uid, collectionName);
+  let processed = 0;
+
+  for (let i = 0; i < docs.length; i += WRITE_BATCH_SIZE) {
+    const slice = docs.slice(i, i + WRITE_BATCH_SIZE);
+    const batch = writeBatch(db);
+    slice.forEach((item) => {
+      if (!item.id) {
+        return;
+      }
+      batch.set(doc(colRef, item.id), item.data ?? {}, { merge });
+    });
+    await batch.commit();
+    processed += slice.length;
+    onProgress?.({ stage: "write", collection: collectionName, processed });
+  }
+
+  return processed;
+};
+
+const deleteCollectionDocs = async (
+  uid: string,
+  collectionName: string,
+  onProgress?: (progress: BackupProgress) => void
+) => {
+  let processed = 0;
+
+  await paginateCollectionDocs(uid, collectionName, WRITE_BATCH_SIZE, async (page) => {
+    const batch = writeBatch(db);
+    page.forEach((docSnap) => {
+      batch.delete(docSnap.ref);
+    });
+    await batch.commit();
+    processed += page.length;
+    onProgress?.({ stage: "delete", collection: collectionName, processed });
+  });
+
+  return processed;
+};
+
+export const exportUserData = async (
+  uid: string,
+  options?: { onProgress?: (progress: BackupProgress) => void }
+) => {
+  ensureUid(uid);
+  const onProgress = options?.onProgress;
+  const profileSnap = await getDoc(doc(usersCollection(), uid));
+  const userProfile = profileSnap.exists()
+    ? {
+        id: profileSnap.id,
+        data: serializeFirestoreData(
+          profileSnap.data() as Record<string, unknown>
+        ),
+      }
+    : null;
+
+  if (userProfile?.data) {
+    userProfile.data = { ...userProfile.data, uid };
+  }
+
+  const collections: Record<string, BackupDoc[]> = {};
+  for (const collectionName of ADMIN_COLLECTIONS) {
+    collections[collectionName] = await readCollectionDocs(
+      uid,
+      collectionName,
+      onProgress
+    );
+  }
+
+  const appVersion = import.meta.env.VITE_APP_VERSION;
+
+  return {
+    schemaVersion: BACKUP_SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    appVersion: appVersion && appVersion.trim() ? appVersion : undefined,
+    userProfile,
+    collections,
+  } satisfies BackupPayload;
+};
+
+export const restoreUserData = async (
+  uid: string,
+  payload: BackupPayload,
+  options?: { onProgress?: (progress: BackupProgress) => void; merge?: boolean }
+) => {
+  ensureUid(uid);
+  const onProgress = options?.onProgress;
+  const merge = options?.merge ?? true;
+
+  if (payload.userProfile?.data) {
+    const profileData = { ...payload.userProfile.data, uid };
+    await setDoc(doc(usersCollection(), uid), profileData, { merge });
+  }
+
+  const collections = payload.collections ?? {};
+  const collectionNames = Object.keys(collections).filter(isSafeCollectionName);
+  for (const collectionName of collectionNames) {
+    const docs = normalizeBackupDocs(collections[collectionName]);
+    await writeCollectionDocs(uid, collectionName, docs, merge, onProgress);
+  }
+};
+
+export const wipeUserData = async (
+  uid: string,
+  options?: { onProgress?: (progress: BackupProgress) => void; includeProfile?: boolean }
+) => {
+  ensureUid(uid);
+  const onProgress = options?.onProgress;
+
+  for (const collectionName of ADMIN_COLLECTIONS) {
+    await deleteCollectionDocs(uid, collectionName, onProgress);
+  }
+
+  if (options?.includeProfile) {
+    await deleteDoc(doc(usersCollection(), uid));
+  }
 };
 
 const isIndexError = (error: FirebaseError) => {

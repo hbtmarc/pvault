@@ -1,4 +1,4 @@
-# Controle Financeiro (Sprint 2)
+# Controle Financeiro (Sprint 6)
 
 Front-end estatico (Vite + React + TypeScript + Tailwind) com autenticacao Firebase (email/senha), Firestore em producao e deploy automatico no GitHub Pages.
 
@@ -29,7 +29,9 @@ VITE_FIREBASE_STORAGE_BUCKET=...
 VITE_FIREBASE_MESSAGING_SENDER_ID=...
 VITE_FIREBASE_APP_ID=...
 VITE_FIREBASE_MEASUREMENT_ID=...
+VITE_ADMIN_UIDS=UID_DO_ADMIN,OUTRO_UID
 ```
+`VITE_ADMIN_UIDS` e opcional e nao e segredo (lista separada por virgula).
 
 4) Atualize o `projectId` do Firebase CLI:
 Edite `.firebaserc` e substitua `your-firebase-project-id` pelo ID do seu projeto.
@@ -55,7 +57,8 @@ firebase deploy --only firestore:rules,firestore:indexes
 ## Deploy automatico no GitHub Pages
 1) Suba o projeto para um repositorio no GitHub (branch `main`).
 2) Em **Settings -> Pages**, selecione **Build and deployment -> GitHub Actions**.
-3) Faca push. O workflow `deploy.yml` ira:
+3) Em **Settings -> Secrets and variables -> Actions -> Variables**, crie `VITE_ADMIN_UIDS` (nao e segredo).
+4) Faca push. O workflow `deploy.yml` ira:
    - instalar dependencias
    - rodar `npm run build -- --base=/${{ github.event.repository.name }}/`
    - publicar o `dist/`
@@ -73,6 +76,10 @@ Para a autenticacao funcionar no GitHub Pages, adicione seu dominio em:
 
 ## Importante sobre emuladores
 Este Sprint usa Firestore em producao. Nao use emuladores para gravar dados reais.
+
+## Mes global (todas as paginas)
+- O mes selecionado e compartilhado entre Dashboard, Lancamentos, Orcamento, Recorrencias, Faturas e Cartoes.
+- O mes fica salvo no navegador e pode ser compartilhado via URL: `#/app?m=2026-01`.
 
 ## Como usar Orcamento
 1) Va para **Orcamento** em `#/app/budget`.
@@ -106,6 +113,13 @@ VITE_ADMIN_UIDS=UID_DO_ADMIN,OUTRO_UID
 firebase deploy --only firestore:rules
 ```
 5) Reinicie o `npm run dev` para ler o novo `.env.local`.
+6) Em producao (GitHub Pages), configure `VITE_ADMIN_UIDS` em **Actions -> Variables**.
+
+Controle de dados (backup/restore/wipe) em `#/app/admin`:
+- "Gerar backup" baixa um JSON com os dados do usuario selecionado.
+- "Restaurar" permite substituir tudo (apaga antes) ou mesclar.
+- "Apagar dados" remove subcolecoes; "Apagar tudo" inclui o perfil.
+- Use com cuidado: backups podem ficar grandes em contas com muitos dados.
 
 Como testar:
 - Crie dois usuarios (admin + normal).
@@ -135,5 +149,8 @@ Como testar:
 - [ ] Edito e excluo lancamentos
 - [ ] Logout funciona
 - [ ] Rotas protegidas bloqueiam acesso sem login
+- [ ] Admin aparece para UID admin (dev e prod)
+- [ ] Mes global persiste e `?m=YYYY-MM` funciona
+- [ ] Backup/Wipe/Restore funcionam em `#/app/admin`
 - [ ] GitHub Actions executa build e publica Pages
 - [ ] URL do Pages abre o app

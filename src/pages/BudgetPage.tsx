@@ -4,7 +4,7 @@ import Button from "../components/Button";
 import Card from "../components/Card";
 import ErrorBanner from "../components/ErrorBanner";
 import MonthSelector from "../components/MonthSelector";
-import { getMonthKey } from "../lib/date";
+import { useMonthKey } from "../hooks/useMonthKey";
 import {
   type Budget,
   type Category,
@@ -19,8 +19,8 @@ import { useAdmin } from "../providers/AdminProvider";
 
 const BudgetPage = () => {
   const { authUid, effectiveUid, isImpersonating } = useAdmin();
+  const { monthKey, setMonthKey } = useMonthKey();
   const canWrite = Boolean(authUid) && !isImpersonating;
-  const [monthKey, setMonthKey] = useState(getMonthKey(new Date()));
   const [categories, setCategories] = useState<Category[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [loading, setLoading] = useState(true);

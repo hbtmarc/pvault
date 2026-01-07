@@ -6,6 +6,17 @@ export const getMonthKey = (date: Date) => {
   return `${year}-${month}`;
 };
 
+export const isValidMonthKey = (value: string | null | undefined) => {
+  if (!value) {
+    return false;
+  }
+  if (!/^\d{4}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const [, month] = value.split("-").map(Number);
+  return month >= 1 && month <= 12;
+};
+
 export const formatDateInput = (date: Date) => {
   const year = date.getFullYear();
   const month = pad2(date.getMonth() + 1);

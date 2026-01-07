@@ -5,6 +5,7 @@ import Card from "../components/Card";
 import ErrorBanner from "../components/ErrorBanner";
 import MonthSelector from "../components/MonthSelector";
 import { getMonthKey } from "../lib/date";
+import { useMonthKey } from "../hooks/useMonthKey";
 import {
   type Category,
   type Direction,
@@ -31,8 +32,8 @@ const directionLabels: Record<Direction, string> = {
 
 const RecurringPage = () => {
   const { authUid, effectiveUid, isImpersonating } = useAdmin();
+  const { monthKey, setMonthKey } = useMonthKey();
   const canWrite = Boolean(authUid) && !isImpersonating;
-  const [monthKey, setMonthKey] = useState(getMonthKey(new Date()));
   const [categories, setCategories] = useState<Category[]>([]);
   const [rules, setRules] = useState<RecurringRule[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);

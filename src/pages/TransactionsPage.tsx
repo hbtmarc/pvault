@@ -4,10 +4,11 @@ import Button from "../components/Button";
 import Card from "../components/Card";
 import ErrorBanner from "../components/ErrorBanner";
 import MonthSelector from "../components/MonthSelector";
+import SubtotalBar from "../components/SubtotalBar";
 import TransactionFormModal, {
   type TransactionDraft,
 } from "../components/TransactionFormModal";
-import { getMonthKey } from "../lib/date";
+import { useMonthKey } from "../hooks/useMonthKey";
 import {
   type Card as CardType,
   type Category,
@@ -35,8 +36,8 @@ import { useAdmin } from "../providers/AdminProvider";
 
 const TransactionsPage = () => {
   const { authUid, effectiveUid, isImpersonating } = useAdmin();
+  const { monthKey, setMonthKey } = useMonthKey();
   const canWrite = Boolean(authUid) && !isImpersonating;
-  const [monthKey, setMonthKey] = useState(getMonthKey(new Date()));
   const [categories, setCategories] = useState<Category[]>([]);
   const [cards, setCards] = useState<CardType[]>([]);
   const [archivedCards, setArchivedCards] = useState<CardType[]>([]);
@@ -179,6 +180,22 @@ const TransactionsPage = () => {
         b.plannedDate.localeCompare(a.plannedDate)
       ),
     [plannedRecurring, plannedInstallments]
+  );
+
+  const subtotal = useMemo(
+    () =>
+      transactions.reduce(
+        (acc, transaction) => {
+          if (transaction.type === "income") {
+            acc.income += transaction.amountCents;
+          } else if (transaction.type === "expense") {
+            acc.expense += transaction.amountCents;
+          }
+          return acc;
+        },
+        { income: 0, expense: 0 }
+      ),
+    [transactions]
   );
 
   const openCreateModal = () => {
@@ -576,6 +593,13 @@ const TransactionsPage = () => {
             );
           })}
         </div>
+
+        <SubtotalBar
+          title="Subtotal do mes (itens exibidos)"
+          itemsCount={transactions.length}
+          incomeCents={subtotal.income}
+          expenseCents={subtotal.expense}
+        />
       </Card>
 
       <TransactionFormModal

@@ -5,7 +5,7 @@ import Card from "../components/Card";
 import ErrorBanner from "../components/ErrorBanner";
 import Input from "../components/Input";
 import MonthSelector from "../components/MonthSelector";
-import { getMonthKey } from "../lib/date";
+import { useMonthKey } from "../hooks/useMonthKey";
 import {
   type Card as CardType,
   type FirestoreErrorInfo,
@@ -23,8 +23,8 @@ import { useAdmin } from "../providers/AdminProvider";
 
 const CardsPage = () => {
   const { authUid, effectiveUid, isImpersonating } = useAdmin();
+  const { monthKey, setMonthKey } = useMonthKey();
   const canWrite = Boolean(authUid) && !isImpersonating;
-  const [monthKey, setMonthKey] = useState(getMonthKey(new Date()));
   const [cards, setCards] = useState<CardType[]>([]);
   const [archivedCards, setArchivedCards] = useState<CardType[]>([]);
   const [statementTransactions, setStatementTransactions] = useState<Transaction[]>(

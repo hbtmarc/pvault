@@ -4,7 +4,9 @@ import Button from "../components/Button";
 import Card from "../components/Card";
 import ErrorBanner from "../components/ErrorBanner";
 import MonthSelector from "../components/MonthSelector";
-import { getMonthKey, getDueDateISO, shiftMonthKey } from "../lib/date";
+import SubtotalBar from "../components/SubtotalBar";
+import { getDueDateISO, shiftMonthKey } from "../lib/date";
+import { useMonthKey } from "../hooks/useMonthKey";
 import {
   type Card as CardType,
   type Category,
@@ -29,8 +31,8 @@ import { useAdmin } from "../providers/AdminProvider";
 
 const StatementsPage = () => {
   const { authUid, effectiveUid, isImpersonating } = useAdmin();
+  const { monthKey, setMonthKey } = useMonthKey();
   const canWrite = Boolean(authUid) && !isImpersonating;
-  const [monthKey, setMonthKey] = useState(getMonthKey(new Date()));
   const [cards, setCards] = useState<CardType[]>([]);
   const [selectedCardId, setSelectedCardId] = useState("");
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -457,6 +459,12 @@ const StatementsPage = () => {
               );
             })}
           </div>
+
+          <SubtotalBar
+            title="Subtotal da fatura"
+            itemsCount={transactions.length}
+            totalCents={statementTotal}
+          />
         </Card>
         </>
       )}

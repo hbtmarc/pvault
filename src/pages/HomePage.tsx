@@ -7,7 +7,7 @@ import MonthSelector from "../components/MonthSelector";
 import TransactionFormModal, {
   type TransactionDraft,
 } from "../components/TransactionFormModal";
-import { getMonthKey } from "../lib/date";
+import { useMonthKey } from "../hooks/useMonthKey";
 import {
   type Budget,
   type Card as CardType,
@@ -37,8 +37,8 @@ import { useAdmin } from "../providers/AdminProvider";
 
 const HomePage = () => {
   const { authUid, effectiveUid, isImpersonating } = useAdmin();
+  const { monthKey, setMonthKey } = useMonthKey();
   const canWrite = Boolean(authUid) && !isImpersonating;
-  const [monthKey, setMonthKey] = useState(getMonthKey(new Date()));
   const [categories, setCategories] = useState<Category[]>([]);
   const [cards, setCards] = useState<CardType[]>([]);
   const [archivedCards, setArchivedCards] = useState<CardType[]>([]);

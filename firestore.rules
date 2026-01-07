@@ -1,40 +1,28 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    function signedIn() {
+    function isSignedIn() {
       return request.auth != null;
     }
 
-    // Admins (por UID). Para seu caso: só você.
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Replace ADMIN_UID with the real admin UID before deploy.
     function isAdmin() {
-      return signedIn() && request.auth.uid in [
-        "JPqv3o4EIqQyfbnWVS2KEcL1hoo1"
-      ];
+      return isSignedIn() && request.auth.uid == "ADMIN_UID";
     }
 
-    // Documento "perfil" do usuário: /users/{uid}
-    match /users/{userId} {
-      // Usuário cria/edita seu próprio perfil
-      allow create: if signedIn() && request.auth.uid == userId;
-      allow update, delete: if signedIn() && request.auth.uid == userId;
-
-      // Usuário lê o próprio perfil; admin pode ler perfis para listar usuários
-      allow read: if (signedIn() && request.auth.uid == userId) || isAdmin();
+    match /users/{uid} {
+      allow read, write: if isOwner(uid) || isAdmin();
     }
 
-    // Subcoleções do usuário: /users/{uid}/categories|transactions|budgets|recurringRules|...
-    match /users/{userId}/{document=**} {
-      // Dono lê tudo dele; admin lê tudo de todos (para personificar)
-      allow read: if (signedIn() && request.auth.uid == userId) || isAdmin();
-
-      // Dono pode escrever no próprio espaço.
-      // IMPORTANTE: admin NÃO escreve em outros usuários (read-only cross-account).
-      allow write: if signedIn() && request.auth.uid == userId;
+    match /users/{uid}/{document=**} {
+      allow read, write: if isOwner(uid) || isAdmin();
     }
 
-    // Negar qualquer outra coisa fora de /users/*
+    // Deny everything else.
     match /{document=**} {
       allow read, write: if false;
     }
