@@ -10,6 +10,66 @@
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PVault</title>
+    <script>
+      (() => {
+        const FLAG = "__pvault_cleaned__";
+        const alreadyCleaned = (() => {
+          try {
+            return window.sessionStorage.getItem(FLAG) === "1";
+          } catch {
+            return false;
+          }
+        })();
+
+        if (alreadyCleaned || !("serviceWorker" in navigator)) {
+          return;
+        }
+
+        const markCleaned = () => {
+          try {
+            window.sessionStorage.setItem(FLAG, "1");
+          } catch {
+            /* ignore */
+          }
+        };
+
+        const clean = async () => {
+          let removedRegistrations = 0;
+          let removedCaches = 0;
+          const hadController = Boolean(navigator.serviceWorker.controller);
+
+          try {
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            const results = await Promise.all(
+              registrations.map((registration) => registration.unregister())
+            );
+            removedRegistrations = results.filter(Boolean).length;
+          } catch (error) {
+            console.warn("[pvault] SW unregister failed", error);
+          }
+
+          if ("caches" in window) {
+            try {
+              const keys = await window.caches.keys();
+              const results = await Promise.all(keys.map((key) => window.caches.delete(key)));
+              removedCaches = results.filter(Boolean).length;
+            } catch (error) {
+              console.warn("[pvault] cache cleanup failed", error);
+            }
+          }
+
+          if (removedRegistrations > 0 || removedCaches > 0 || hadController) {
+            markCleaned();
+            window.location.reload();
+            return;
+          }
+
+          markCleaned();
+        };
+
+        clean().catch(() => markCleaned());
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

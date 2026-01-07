@@ -9,9 +9,11 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
-    // Replace ADMIN_UID with the real admin UID before deploy.
+    // Keep this list in sync with VITE_ADMIN_UIDS used by the frontend build.
     function isAdmin() {
-      return isSignedIn() && request.auth.uid == "ADMIN_UID";
+      return isSignedIn() && request.auth.uid in [
+        "JPqy3o4ElqQybnWVS2KEcL1hoo1"
+      ];
     }
 
     match /users/{uid} {
