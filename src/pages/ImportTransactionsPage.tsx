@@ -2,6 +2,15 @@ import { useRef, useState } from "react";
 import AppShell from "../components/AppShell";
 import Button from "../components/Button";
 import Card from "../components/Card";
+import { normalizeHeader } from "../ingestion/csv";
+import { upsertTransactions } from "../ingestion/firestoreUpsert";
+import { importUploadedFiles } from "../ingestion/importUploadedFiles";
+import type { ParsedCsv } from "../ingestion/types";
+import type { Transaction } from "../lib/firestore";
+import { db } from "../lib/firebase";
+import { getMonthKeyFromDateISO } from "../lib/date";
+import { parseAmountToCents } from "../lib/money";
+import { useAdmin } from "../providers/AdminProvider";
 
 const statusStyles = {
   success: "text-emerald-600",
@@ -23,12 +32,95 @@ type LogEntry = {
   timestamp: string;
 };
 
+type BuildResult = {
+  transactions: Transaction[];
+  skipped: number;
+};
+
+const parseDateInput = (raw: string) => {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (/^\\d{4}-\\d{2}-\\d{2}$/.test(trimmed)) {
+    return trimmed;
+  }
+  const match = trimmed.match(/^(\\d{2})[./-](\\d{2})[./-](\\d{4})$/);
+  if (match) {
+    const [, day, month, year] = match;
+    return `${year}-${month}-${day}`;
+  }
+  return null;
+};
+
+const hashString = (value: string) => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(36);
+};
+
+const createImportId = (parserId: string, row: string[]) => {
+  const rawKey = [parserId, ...row].join("|");
+  return `${parserId}-${hashString(rawKey)}`;
+};
+
+const buildTransactionsFromParsed = (parsed: ParsedCsv): BuildResult => {
+  const normalizedHeader = normalizeHeader(parsed.header);
+  const dateIndex = normalizedHeader.indexOf("data");
+  const amountIndex = normalizedHeader.indexOf("valor");
+  const descriptionIndex = normalizedHeader.findIndex((value) =>
+    ["descricao", "historico"].includes(value)
+  );
+  const categoryIndex = normalizedHeader.indexOf("categoria");
+
+  let skipped = 0;
+  const transactions: Transaction[] = [];
+
+  parsed.rows.forEach((row) => {
+    const dateRaw = dateIndex >= 0 ? row[dateIndex] ?? "" : "";
+    const amountRaw = amountIndex >= 0 ? row[amountIndex] ?? "" : "";
+    const dateISO = parseDateInput(dateRaw);
+    const parsedAmount = parseAmountToCents(amountRaw);
+
+    if (!dateISO || parsedAmount === null || parsedAmount === 0) {
+      skipped += 1;
+      return;
+    }
+
+    const amountCents = Math.abs(parsedAmount);
+    const type = parsedAmount < 0 ? "expense" : "income";
+    const description =
+      descriptionIndex >= 0 ? row[descriptionIndex]?.trim() ?? "" : "";
+    const categoryLabel =
+      categoryIndex >= 0 ? row[categoryIndex]?.trim() ?? "" : "";
+
+    transactions.push({
+      id: createImportId(parsed.parserId, row),
+      type,
+      paymentMethod: "cash",
+      amountCents,
+      date: dateISO,
+      monthKey: getMonthKeyFromDateISO(dateISO),
+      description: description || undefined,
+      name: categoryLabel || undefined,
+    });
+  });
+
+  return { transactions, skipped };
+};
+
+const dedupeTransactions = (transactions: Transaction[]) =>
+  Array.from(new Map(transactions.map((tx) => [tx.id, tx])).values());
+
 const ImportTransactionsPage = () => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [uploading, setUploading] = useState(false);
   const [formError, setFormError] = useState("");
+  const { effectiveUid } = useAdmin();
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -41,21 +133,78 @@ const ImportTransactionsPage = () => {
     setUploading(true);
     setFormError("");
 
-    const timestamp = new Date().toLocaleString("pt-BR");
-    const newEntry: LogEntry = {
-      id: `${selectedFile.name}-${Date.now()}`,
-      status: "success",
-      message: `Arquivo ${selectedFile.name} enviado para processamento.`,
-      detail: `Tamanho: ${(selectedFile.size / 1024).toFixed(1)} KB`,
-      timestamp,
-    };
+    try {
+      const results = await importUploadedFiles([selectedFile]);
+      const entries: LogEntry[] = [];
 
-    setLogs((prev) => [newEntry, ...prev]);
-    setSelectedFile(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
+      for (const result of results) {
+        const timestamp = new Date().toLocaleString("pt-BR");
+
+        if (result.status === "error") {
+          entries.push({
+            id: `${result.fileName}-${Date.now()}`,
+            status: "error",
+            message: `Falha ao importar ${result.fileName}.`,
+            detail: result.error,
+            timestamp,
+          });
+          continue;
+        }
+
+        if (!effectiveUid) {
+          entries.push({
+            id: `${result.fileName}-${Date.now()}`,
+            status: "error",
+            message: `Nao foi possivel identificar o usuario.`,
+            detail: "Conecte-se novamente antes de importar.",
+            timestamp,
+          });
+          continue;
+        }
+
+        const { transactions, skipped } = buildTransactionsFromParsed(
+          result.parsed
+        );
+        const deduped = dedupeTransactions(transactions);
+
+        if (deduped.length === 0) {
+          entries.push({
+            id: `${result.fileName}-${Date.now()}`,
+            status: "warning",
+            message: `Nenhuma transacao valida encontrada em ${result.fileName}.`,
+            detail: skipped
+              ? `${skipped} linha(s) ignoradas por falta de dados.`
+              : "Verifique o formato do arquivo.",
+            timestamp,
+          });
+          continue;
+        }
+
+        const { written, batches } = await upsertTransactions(
+          db,
+          effectiveUid,
+          deduped
+        );
+
+        entries.push({
+          id: `${result.fileName}-${Date.now()}`,
+          status: "success",
+          message: `Transacoes importadas de ${result.fileName}.`,
+          detail: `Gravadas ${written} de ${deduped.length}. Batches: ${batches}. Ignoradas: ${skipped}.`,
+          timestamp,
+        });
+      }
+
+      setLogs((prev) => [...entries, ...prev]);
+      setSelectedFile(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    } catch (error) {
+      setFormError("Nao foi possivel importar o arquivo. Tente novamente.");
+    } finally {
+      setUploading(false);
     }
-    setUploading(false);
   };
 
   return (
