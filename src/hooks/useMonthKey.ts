@@ -1,5 +1,1 @@
-import { useMonth } from "../state/MonthProvider";
-
-export const useMonthKey = () => {
-  return useMonth();
-};
+export { useMonth as useMonthKey } from "../state/MonthProvider";
