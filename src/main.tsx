@@ -6,14 +6,20 @@ import { AdminProvider } from "./providers/AdminProvider";
 import { AuthProvider } from "./providers/AuthProvider";
 import { unregisterServiceWorkersInDev } from "./lib/dev/unregisterServiceWorkers";
 
-unregisterServiceWorkersInDev();
+const bootstrap = async () => {
+  if (import.meta.env.DEV) {
+    await unregisterServiceWorkersInDev();
+  }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <AuthProvider>
-      <AdminProvider>
-        <App />
-      </AdminProvider>
-    </AuthProvider>
-  </React.StrictMode>
-);
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <AuthProvider>
+        <AdminProvider>
+          <App />
+        </AdminProvider>
+      </AuthProvider>
+    </React.StrictMode>
+  );
+};
+
+bootstrap();
