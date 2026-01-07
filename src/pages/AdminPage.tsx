@@ -43,6 +43,7 @@ const AdminPage = () => {
     const unsubscribe = listUserProfiles(
       authUid,
       (items) => {
+        setError(null); // limpa erro anterior quando a leitura for autorizada
         setUsers(items);
         setLoading(false);
       },
