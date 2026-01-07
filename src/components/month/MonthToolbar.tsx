@@ -35,20 +35,30 @@ export const currentMonthKey = () => {
   return toMonthKey(now.getFullYear(), now.getMonth() + 1);
 };
 
-export const formatMonthLabel = (monthKey: string) => {
+const getMonthText = (monthKey: string) => {
   const { year, month } = parseMonthKey(monthKey);
   const label = new Intl.DateTimeFormat("pt-BR", { month: "long" }).format(
     new Date(year, month - 1, 1)
   );
-  const capitalized = label.charAt(0).toUpperCase() + label.slice(1);
-  return `${capitalized} ${year}`;
+  return label.charAt(0).toUpperCase() + label.slice(1);
+};
+
+export const formatMonthLabel = (monthKey: string) => {
+  const { year } = parseMonthKey(monthKey);
+  return `${getMonthText(monthKey)} ${year}`;
 };
 
 const MonthToolbar = ({ rightSlot, className }: MonthToolbarProps) => {
   const { monthKey, setMonthKey } = useMonthKey();
-  const label = formatMonthLabel(monthKey);
+  const { year } = parseMonthKey(monthKey);
+  const monthText = getMonthText(monthKey);
   const todayKey = currentMonthKey();
   const isCurrentMonth = monthKey === todayKey;
+  const controlBase =
+    "h-10 rounded-lg border border-slate-200 bg-white/70 text-slate-700 shadow-sm";
+  const controlIcon = `${controlBase} w-10 p-0`;
+  const controlPill =
+    `${controlBase} inline-flex items-center justify-center px-4 text-sm font-semibold`;
 
   return (
     <div
@@ -56,24 +66,25 @@ const MonthToolbar = ({ rightSlot, className }: MonthToolbarProps) => {
         className ?? ""
       }`}
     >
-      <div className="flex items-center gap-2">
+      <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
         <Button
           type="button"
           variant="secondary"
-          className="h-10 w-10 p-0 bg-white/70 shadow-sm"
+          className={controlIcon}
           onClick={() => setMonthKey(addMonths(monthKey, -1))}
           aria-label="Mes anterior"
           title="Mes anterior"
         >
           ‹
         </Button>
-        <div className="inline-flex h-10 min-w-[9rem] items-center justify-center rounded-lg border border-slate-200 bg-white/70 px-4 text-sm font-semibold text-slate-700 shadow-sm">
-          {label}
+        <div className={`${controlPill} cursor-default select-none`}>
+          <span>{monthText}</span>
+          <span className="ml-2 text-xs font-normal text-slate-500">{year}</span>
         </div>
         <Button
           type="button"
           variant="secondary"
-          className="h-10 w-10 p-0 bg-white/70 shadow-sm"
+          className={controlIcon}
           onClick={() => setMonthKey(addMonths(monthKey, 1))}
           aria-label="Proximo mes"
           title="Proximo mes"
@@ -83,7 +94,7 @@ const MonthToolbar = ({ rightSlot, className }: MonthToolbarProps) => {
         <Button
           type="button"
           variant="secondary"
-          className="h-10 w-10 p-0 bg-white/70 shadow-sm"
+          className={controlIcon}
           onClick={() => setMonthKey(todayKey)}
           aria-label="Voltar para o mes atual"
           title="Voltar para o mes atual"
@@ -94,7 +105,7 @@ const MonthToolbar = ({ rightSlot, className }: MonthToolbarProps) => {
       </div>
 
       {rightSlot ? (
-        <div className="flex items-center justify-start sm:justify-end">
+        <div className="flex w-full items-center justify-start sm:w-auto sm:ml-auto sm:justify-end">
           {rightSlot}
         </div>
       ) : null}
