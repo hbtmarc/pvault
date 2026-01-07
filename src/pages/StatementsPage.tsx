@@ -7,17 +7,19 @@ import MonthSelector from "../components/MonthSelector";
 import { getMonthKey, getDueDateISO } from "../lib/date";
 import {
   type Card as CardType,
-  type CardStatement,
   type Category,
   type FirestoreErrorInfo,
+  type StatementPayment,
   type Transaction,
   createTransaction,
+  deleteStatementPayment,
   getFirestoreErrorInfo,
   listCardTransactionsByStatement,
   listCards,
   listCategories,
-  listenCardStatement,
-  setCardStatementPaid,
+  listenStatementPayment,
+  removeTransaction,
+  upsertStatementPayment,
 } from "../lib/firestore";
 import { formatCurrency } from "../lib/money";
 import { useAdmin } from "../providers/AdminProvider";
@@ -29,11 +31,16 @@ const StatementsPage = () => {
   const [cards, setCards] = useState<CardType[]>([]);
   const [selectedCardId, setSelectedCardId] = useState("");
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [statement, setStatement] = useState<CardStatement | null>(null);
+  const [statement, setStatement] = useState<StatementPayment | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [archivedCategories, setArchivedCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
+  const [unpaying, setUnpaying] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [paymentDate, setPaymentDate] = useState("");
+  const [paymentNotes, setPaymentNotes] = useState("");
+  const [modalError, setModalError] = useState("");
   const [error, setError] = useState<FirestoreErrorInfo | null>(null);
 
   useEffect(() => {
@@ -110,7 +117,7 @@ const StatementsPage = () => {
       return undefined;
     }
 
-    const unsubscribe = listenCardStatement(
+    const unsubscribe = listenStatementPayment(
       effectiveUid,
       selectedCardId,
       monthKey,
@@ -120,6 +127,7 @@ const StatementsPage = () => {
 
     return () => unsubscribe();
   }, [effectiveUid, selectedCardId, monthKey]);
+
 
   const categoriesById = useMemo(() => {
     const map = new Map<string, Category>();
@@ -146,29 +154,90 @@ const StatementsPage = () => {
     }, 0);
   }, [transactions]);
 
-  const isPaid = statement?.status === "paid";
+  const isPaid = Boolean(statement);
   const canPay = canWrite && !isPaid && statementTotal > 0 && Boolean(selectedCard);
+  const canUnpay = canWrite && isPaid && Boolean(selectedCard);
+
+  const openPaymentModal = () => {
+    if (!selectedCard || !canPay) {
+      return;
+    }
+    setPaymentDate(getDueDateISO(monthKey, selectedCard.dueDay));
+    setPaymentNotes("");
+    setModalError("");
+    setModalOpen(true);
+  };
+
+  const closePaymentModal = () => {
+    if (paying) {
+      return;
+    }
+    setModalOpen(false);
+  };
 
   const handlePayStatement = async () => {
     if (!authUid || !selectedCard || !canPay) {
       return;
     }
 
+    if (!paymentDate) {
+      setModalError("Informe a data do pagamento.");
+      return;
+    }
+
     try {
       setPaying(true);
-      const dueDate = getDueDateISO(monthKey, selectedCard.dueDay);
+      setModalError("");
+
+      const paymentName = `Pagamento fatura ${selectedCard.name} ${monthKey}`;
       const tx = await createTransaction(authUid, {
         type: "transfer",
         paymentMethod: "cash",
         amountCents: statementTotal,
-        date: dueDate,
-        description: `Pagamento fatura ${selectedCard.name} ${monthKey}`,
+        date: paymentDate,
+        description: paymentName,
+        name: paymentName,
+        notes: paymentNotes.trim() ? paymentNotes.trim() : undefined,
+        paymentKind: "card_payment",
+        cardId: selectedCard.id,
+        statementMonthKey: monthKey,
       });
-      await setCardStatementPaid(authUid, selectedCard.id, monthKey, tx.id);
+
+      await upsertStatementPayment(authUid, selectedCard.id, monthKey, {
+        paidAt: paymentDate,
+        paymentTransactionId: tx.id,
+        totalCentsSnapshot: statementTotal,
+        notes: paymentNotes.trim() ? paymentNotes.trim() : undefined,
+      });
+
+      setModalOpen(false);
+    } catch (err) {
+      setModalError(getFirestoreErrorInfo(err).message);
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  const handleUnpayStatement = async () => {
+    if (!authUid || !selectedCard || !canUnpay) {
+      return;
+    }
+
+    const confirmed = window.confirm("Desmarcar fatura como paga?");
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setUnpaying(true);
+      if (statement?.paymentTransactionId) {
+        await removeTransaction(authUid, statement.paymentTransactionId);
+      }
+      await deleteStatementPayment(authUid, selectedCard.id, monthKey);
     } catch (err) {
       setError(getFirestoreErrorInfo(err));
     } finally {
-      setPaying(false);
+      setUnpaying(false);
     }
   };
 
@@ -228,6 +297,11 @@ const StatementsPage = () => {
               >
                 {isPaid ? "Paga" : "Aberta"}
               </span>
+              {statement?.paidAt ? (
+                <span className="text-xs text-slate-500">
+                  Pago em {statement.paidAt}
+                </span>
+              ) : null}
             </div>
           </div>
 
@@ -237,10 +311,20 @@ const StatementsPage = () => {
             </p>
           ) : null}
 
-          <div className="mt-4">
-            <Button onClick={handlePayStatement} loading={paying} disabled={!canPay}>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button onClick={openPaymentModal} disabled={!canPay}>
               Marcar fatura como paga
             </Button>
+            {isPaid ? (
+              <Button
+                variant="secondary"
+                onClick={handleUnpayStatement}
+                loading={unpaying}
+                disabled={!canUnpay}
+              >
+                Desmarcar como paga
+              </Button>
+            ) : null}
           </div>
 
           {loading ? (
@@ -299,6 +383,62 @@ const StatementsPage = () => {
           </div>
         </Card>
       )}
+
+      {modalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4 py-8">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-slate-900">
+                Marcar fatura como paga
+              </h2>
+              <button
+                type="button"
+                onClick={closePaymentModal}
+                className="text-sm text-slate-500 hover:text-slate-700"
+              >
+                Fechar
+              </button>
+            </div>
+
+            {modalError ? (
+              <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">
+                {modalError}
+              </div>
+            ) : null}
+
+            <div className="space-y-4">
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="font-medium text-slate-700">Data do pagamento</span>
+                <input
+                  type="date"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                  value={paymentDate}
+                  onChange={(event) => setPaymentDate(event.target.value)}
+                />
+              </label>
+
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="font-medium text-slate-700">Observacao</span>
+                <input
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                  value={paymentNotes}
+                  onChange={(event) => setPaymentNotes(event.target.value)}
+                  placeholder="Opcional"
+                />
+              </label>
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <Button type="button" variant="secondary" onClick={closePaymentModal}>
+                Cancelar
+              </Button>
+              <Button onClick={handlePayStatement} loading={paying}>
+                Confirmar pagamento
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </AppShell>
   );
 };

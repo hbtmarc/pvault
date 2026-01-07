@@ -30,6 +30,8 @@ export type PaymentMethod = "cash" | "card";
 
 export type TransactionSourceType = "manual" | "recurring";
 
+export type PaymentKind = "card_payment";
+
 export type Category = {
   id: string;
   name: string;
@@ -47,6 +49,9 @@ export type Transaction = {
   monthKey: string;
   categoryId?: string;
   description?: string;
+  name?: string;
+  notes?: string;
+  paymentKind?: PaymentKind;
   cardId?: string;
   statementMonthKey?: string;
   installmentPlanId?: string;
@@ -103,6 +108,18 @@ export type CardStatement = {
   status: "open" | "paid";
   paidAt?: unknown;
   paidTxId?: string;
+};
+
+export type StatementPayment = {
+  id: string;
+  cardId: string;
+  statementMonthKey: string;
+  paidAt: string;
+  paymentTransactionId?: string;
+  totalCentsSnapshot: number;
+  notes?: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
 };
 
 export type UserProfile = {
@@ -163,6 +180,9 @@ type TransactionInput = {
   date: string;
   categoryId?: string;
   description?: string;
+  name?: string;
+  notes?: string;
+  paymentKind?: PaymentKind;
   cardId?: string;
   statementMonthKey?: string;
   installmentPlanId?: string;
@@ -219,6 +239,8 @@ const installmentPlansCollection = (uid: string) =>
 
 const cardStatementsCollection = (uid: string) =>
   collection(db, "users", uid, "cardStatements");
+
+const statementsCollection = (uid: string) => collection(db, "users", uid, "statements");
 
 const usersCollection = () => collection(db, "users");
 
@@ -481,6 +503,9 @@ export const listTransactionsByMonth = (
           monthKey: (data.monthKey as string) ?? "",
           categoryId: (data.categoryId as string) ?? "",
           description: (data.description as string) ?? "",
+          name: (data.name as string) ?? "",
+          notes: (data.notes as string) ?? "",
+          paymentKind: (data.paymentKind as PaymentKind) ?? undefined,
           cardId: (data.cardId as string) ?? undefined,
           statementMonthKey: (data.statementMonthKey as string) ?? undefined,
           installmentPlanId: (data.installmentPlanId as string) ?? undefined,
@@ -520,6 +545,15 @@ export const createTransaction = async (uid: string, data: TransactionInput) => 
     updatedAt: serverTimestamp(),
   };
 
+  if (data.name) {
+    payload.name = data.name.trim();
+  }
+  if (data.notes) {
+    payload.notes = data.notes.trim();
+  }
+  if (data.paymentKind) {
+    payload.paymentKind = data.paymentKind;
+  }
   if (data.categoryId) {
     payload.categoryId = data.categoryId;
   }
@@ -573,6 +607,15 @@ export const updateTransaction = async (
     updatedAt: serverTimestamp(),
   };
 
+  if (data.name !== undefined) {
+    payload.name = data.name ? data.name.trim() : deleteField();
+  }
+  if (data.notes !== undefined) {
+    payload.notes = data.notes ? data.notes.trim() : deleteField();
+  }
+  if (data.paymentKind !== undefined) {
+    payload.paymentKind = data.paymentKind ? data.paymentKind : deleteField();
+  }
   if (data.categoryId) {
     payload.categoryId = data.categoryId;
   } else {
@@ -657,6 +700,7 @@ export const listCardTransactionsByStatement = (
     transactionsCollection(uid),
     where("cardId", "==", cardId),
     where("statementMonthKey", "==", statementMonthKey),
+    where("paymentMethod", "==", "card"),
     orderBy("date", "desc")
   );
 
@@ -683,6 +727,9 @@ export const listCardTransactionsByStatement = (
             monthKey: (data.monthKey as string) ?? "",
             categoryId: (data.categoryId as string) ?? "",
             description: (data.description as string) ?? "",
+            name: (data.name as string) ?? "",
+            notes: (data.notes as string) ?? "",
+            paymentKind: (data.paymentKind as PaymentKind) ?? undefined,
             cardId: (data.cardId as string) ?? undefined,
             statementMonthKey: (data.statementMonthKey as string) ?? undefined,
             installmentPlanId: (data.installmentPlanId as string) ?? undefined,
@@ -692,8 +739,7 @@ export const listCardTransactionsByStatement = (
             sourceRuleId: (data.sourceRuleId as string) ?? undefined,
             plannedDate: (data.plannedDate as string) ?? undefined,
           };
-        })
-        .filter((item) => item.paymentMethod === "card");
+        });
 
       onChange(items);
     },
@@ -702,6 +748,77 @@ export const listCardTransactionsByStatement = (
         uid,
         path,
         cardId,
+        statementMonthKey,
+        error,
+      });
+      onError?.(error);
+    }
+  );
+};
+
+export const listCardTransactionsByStatementMonth = (
+  uid: string,
+  statementMonthKey: string,
+  onChange: (items: Transaction[]) => void,
+  onError?: (error: unknown) => void
+) => {
+  ensureUid(uid);
+  const path = `users/${uid}/transactions`;
+
+  logDev("[firestore] listCardTransactionsByStatementMonth", {
+    uid,
+    path,
+    statementMonthKey,
+  });
+
+  const statementQuery = query(
+    transactionsCollection(uid),
+    where("statementMonthKey", "==", statementMonthKey),
+    where("paymentMethod", "==", "card")
+  );
+
+  return onSnapshot(
+    statementQuery,
+    (snapshot) => {
+      const items = snapshot.docs.map((item) => {
+        const data = item.data();
+        const rawType =
+          (data.type as TransactionType) ??
+          (data.direction as Direction) ??
+          "expense";
+        const rawPaymentMethod =
+          (data.paymentMethod as PaymentMethod) ??
+          (data.cardId ? "card" : "cash");
+
+        return {
+          id: item.id,
+          type: rawType,
+          paymentMethod: rawPaymentMethod,
+          amountCents: (data.amountCents as number) ?? 0,
+          date: (data.date as string) ?? "",
+          monthKey: (data.monthKey as string) ?? "",
+          categoryId: (data.categoryId as string) ?? "",
+          description: (data.description as string) ?? "",
+          name: (data.name as string) ?? "",
+          notes: (data.notes as string) ?? "",
+          paymentKind: (data.paymentKind as PaymentKind) ?? undefined,
+          cardId: (data.cardId as string) ?? undefined,
+          statementMonthKey: (data.statementMonthKey as string) ?? undefined,
+          installmentPlanId: (data.installmentPlanId as string) ?? undefined,
+          installmentNumber: (data.installmentNumber as number) ?? undefined,
+          installmentsTotal: (data.installmentsTotal as number) ?? undefined,
+          sourceType: data.sourceType as TransactionSourceType | undefined,
+          sourceRuleId: (data.sourceRuleId as string) ?? undefined,
+          plannedDate: (data.plannedDate as string) ?? undefined,
+        };
+      });
+
+      onChange(items);
+    },
+    (error) => {
+      console.error("[firestore] listCardTransactionsByStatementMonth", {
+        uid,
+        path,
         statementMonthKey,
         error,
       });
@@ -821,6 +938,144 @@ export const listenCardStatement = (
       onError?.(error);
     }
   );
+};
+
+const getStatementPaymentId = (cardId: string, statementMonthKey: string) =>
+  `${cardId}_${statementMonthKey}`;
+
+export const getStatementPaymentDocRef = (
+  uid: string,
+  cardId: string,
+  statementMonthKey: string
+) => {
+  ensureUid(uid);
+  return doc(statementsCollection(uid), getStatementPaymentId(cardId, statementMonthKey));
+};
+
+export const listenStatementPayment = (
+  uid: string,
+  cardId: string,
+  statementMonthKey: string,
+  onChange: (payment: StatementPayment | null) => void,
+  onError?: (error: unknown) => void
+) => {
+  const ref = getStatementPaymentDocRef(uid, cardId, statementMonthKey);
+  const path = `users/${uid}/statements/${getStatementPaymentId(
+    cardId,
+    statementMonthKey
+  )}`;
+
+  logDev("[firestore] listenStatementPayment", {
+    uid,
+    path,
+    cardId,
+    statementMonthKey,
+  });
+
+  return onSnapshot(
+    ref,
+    (snapshot) => {
+      if (!snapshot.exists()) {
+        onChange(null);
+        return;
+      }
+
+      const data = snapshot.data();
+      onChange({
+        id: snapshot.id,
+        cardId: (data.cardId as string) ?? cardId,
+        statementMonthKey:
+          (data.statementMonthKey as string) ?? statementMonthKey,
+        paidAt: (data.paidAt as string) ?? "",
+        paymentTransactionId: (data.paymentTransactionId as string) ?? undefined,
+        totalCentsSnapshot: (data.totalCentsSnapshot as number) ?? 0,
+        notes: (data.notes as string) ?? "",
+        createdAt: data.createdAt,
+        updatedAt: data.updatedAt,
+      });
+    },
+    (error) => {
+      console.error("[firestore] listenStatementPayment", {
+        uid,
+        path,
+        cardId,
+        statementMonthKey,
+        error,
+      });
+      onError?.(error);
+    }
+  );
+};
+
+export const upsertStatementPayment = async (
+  uid: string,
+  cardId: string,
+  statementMonthKey: string,
+  payload: {
+    paidAt: string;
+    paymentTransactionId: string;
+    totalCentsSnapshot: number;
+    notes?: string;
+  }
+) => {
+  ensureUid(uid);
+  const ref = getStatementPaymentDocRef(uid, cardId, statementMonthKey);
+  const path = `users/${uid}/statements/${getStatementPaymentId(
+    cardId,
+    statementMonthKey
+  )}`;
+  const data: Record<string, unknown> = {
+    cardId,
+    statementMonthKey,
+    paidAt: payload.paidAt,
+    paymentTransactionId: payload.paymentTransactionId,
+    totalCentsSnapshot: payload.totalCentsSnapshot,
+    updatedAt: serverTimestamp(),
+    createdAt: serverTimestamp(),
+  };
+
+  if (payload.notes) {
+    data.notes = payload.notes.trim();
+  }
+
+  try {
+    return await setDoc(ref, data, { merge: true });
+  } catch (error) {
+    console.error("[firestore] upsertStatementPayment", {
+      uid,
+      path,
+      cardId,
+      statementMonthKey,
+      error,
+    });
+    throw error;
+  }
+};
+
+export const deleteStatementPayment = async (
+  uid: string,
+  cardId: string,
+  statementMonthKey: string
+) => {
+  ensureUid(uid);
+  const ref = getStatementPaymentDocRef(uid, cardId, statementMonthKey);
+  const path = `users/${uid}/statements/${getStatementPaymentId(
+    cardId,
+    statementMonthKey
+  )}`;
+
+  try {
+    return await deleteDoc(ref);
+  } catch (error) {
+    console.error("[firestore] deleteStatementPayment", {
+      uid,
+      path,
+      cardId,
+      statementMonthKey,
+      error,
+    });
+    throw error;
+  }
 };
 
 export const setCardStatementPaid = async (

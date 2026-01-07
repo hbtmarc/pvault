@@ -482,9 +482,13 @@ const TransactionsPage = () => {
             const categoryName =
               categoriesById.get(transaction.categoryId ?? "")?.name ??
               (transaction.categoryId ? "Categoria removida" : "Sem categoria");
+            const cardInfo = transaction.cardId
+              ? cardsById.get(transaction.cardId)
+              : null;
             const cardName = transaction.cardId
-              ? cardsById.get(transaction.cardId)?.name ?? "Cartao removido"
+              ? cardInfo?.name ?? "Cartao removido"
               : "";
+            const isArchivedCard = Boolean(cardInfo?.archived);
             const badgeStyles =
               transaction.type === "income"
                 ? "bg-emerald-100 text-emerald-700"
@@ -498,7 +502,10 @@ const TransactionsPage = () => {
                   ? "Receita"
                   : "Despesa";
             const canEditTransaction =
-              canWrite && !transaction.installmentPlanId && transaction.type !== "transfer";
+              canWrite &&
+              !transaction.installmentPlanId &&
+              transaction.type !== "transfer" &&
+              !(transaction.paymentMethod === "card" && isArchivedCard);
             const canDeleteTransaction = canWrite && transaction.type !== "transfer";
 
             return (
@@ -525,7 +532,9 @@ const TransactionsPage = () => {
                     <span className="text-xs text-slate-500">{transaction.date}</span>
                   </div>
                   <p className="text-sm font-semibold text-slate-900">
-                    {transaction.type === "transfer" ? "Pagamento de fatura" : categoryName}
+                    {transaction.type === "transfer"
+                      ? transaction.description || "Pagamento de fatura"
+                      : categoryName}
                   </p>
                   {transaction.paymentMethod === "card" && transaction.cardId ? (
                     <p className="text-xs text-slate-500">
