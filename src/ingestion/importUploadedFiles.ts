@@ -27,7 +27,7 @@ export const importUploadedFiles = async (
         return {
           fileName,
           status: "error",
-          error: "não habilitado",
+          error: "nao habilitado",
         };
       }
 
@@ -35,18 +35,27 @@ export const importUploadedFiles = async (
         return {
           fileName,
           status: "error",
-          error: "tipo de arquivo não suportado",
+          error: "tipo de arquivo nao suportado",
         };
       }
 
-      const text = await readTextWithAutoEncoding(file);
-      const parsed = engine.parseCsvByHeader(text);
-
-      return {
-        fileName,
-        status: "success",
-        parsed,
-      };
+      try {
+        const text = await readTextWithAutoEncoding(file);
+        const parsed = engine.parseCsvByHeader(text);
+        return {
+          fileName,
+          status: "success",
+          parsed,
+        };
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Falha ao ler o CSV";
+        return {
+          fileName,
+          status: "error",
+          error: message,
+        };
+      }
     })
   );
 };

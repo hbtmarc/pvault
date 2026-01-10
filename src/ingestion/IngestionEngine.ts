@@ -11,13 +11,13 @@ export class IngestionEngine {
     const [header = []] = rows;
 
     if (header.length === 0) {
-      throw new Error("Cabeçalho CSV não encontrado");
+      throw new Error("Cabecalho CSV nao encontrado");
     }
 
     const parser = this.parsers.find((candidate) => candidate.canParse(header));
 
     if (!parser) {
-      throw new Error("Cabeçalho CSV não reconhecido");
+      throw new Error("Cabecalho CSV nao reconhecido");
     }
 
     return parser.parse(text);

@@ -66,14 +66,28 @@ const createImportId = (parserId: string, row: string[]) => {
   return `${parserId}-${hashString(rawKey)}`;
 };
 
+const findHeaderIndex = (header: string[], keys: string[]) =>
+  header.findIndex((value) => keys.includes(value));
+
 const buildTransactionsFromParsed = (parsed: ParsedCsv): BuildResult => {
   const normalizedHeader = normalizeHeader(parsed.header);
-  const dateIndex = normalizedHeader.indexOf("data");
-  const amountIndex = normalizedHeader.indexOf("valor");
-  const descriptionIndex = normalizedHeader.findIndex((value) =>
-    ["descricao", "historico"].includes(value)
-  );
-  const categoryIndex = normalizedHeader.indexOf("categoria");
+  const dateIndex = findHeaderIndex(normalizedHeader, ["data", "date"]);
+  const amountIndex = findHeaderIndex(normalizedHeader, ["valor", "amount"]);
+  const descriptionIndex = findHeaderIndex(normalizedHeader, [
+    "descricao",
+    "historico",
+    "lancamento",
+    "detalhes",
+    "title",
+  ]);
+  const categoryIndex = findHeaderIndex(normalizedHeader, [
+    "categoria",
+    "category",
+  ]);
+
+  if (dateIndex < 0 || amountIndex < 0) {
+    throw new Error("Cabecalho CSV nao reconhecido");
+  }
 
   let skipped = 0;
   const transactions: Transaction[] = [];
@@ -120,13 +134,19 @@ const ImportTransactionsPage = () => {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [uploading, setUploading] = useState(false);
   const [formError, setFormError] = useState("");
-  const { effectiveUid } = useAdmin();
+  const { effectiveUid, isImpersonating } = useAdmin();
+  const canWrite = Boolean(effectiveUid) && !isImpersonating;
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (!selectedFile) {
       setFormError("Selecione um arquivo para importar.");
+      return;
+    }
+
+    if (!canWrite) {
+      setFormError("Importacao bloqueada durante a impersonacao.");
       return;
     }
 
@@ -201,6 +221,9 @@ const ImportTransactionsPage = () => {
         fileInputRef.current.value = "";
       }
     } catch (error) {
+      if (import.meta.env.DEV) {
+        console.error("[import] falha na importacao", error);
+      }
       setFormError("Nao foi possivel importar o arquivo. Tente novamente.");
     } finally {
       setUploading(false);
@@ -217,7 +240,7 @@ const ImportTransactionsPage = () => {
                 Envie o arquivo de lancamentos
               </h2>
               <p className="text-sm text-slate-600">
-                Formatos recomendados: CSV ou OFX. A importacao nao altera seus
+                Formato recomendado: CSV. A importacao nao altera seus
                 lancamentos ate voce revisar os resultados.
               </p>
             </div>
@@ -230,7 +253,7 @@ const ImportTransactionsPage = () => {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".csv,.ofx"
+                  accept=".csv"
                   className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 file:mr-4 file:rounded-full file:border-0 file:bg-emerald-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-emerald-700 hover:file:bg-emerald-100"
                   onChange={(event) =>
                     setSelectedFile(event.currentTarget.files?.[0] ?? null)
