@@ -1,232 +1,192 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import AppShell from "../components/AppShell";
 import Button from "../components/Button";
 import Card from "../components/Card";
-import { normalizeHeader } from "../ingestion/csv";
-import { upsertTransactions } from "../ingestion/firestoreUpsert";
 import { importUploadedFiles } from "../ingestion/importUploadedFiles";
-import type { ParsedCsv } from "../ingestion/types";
-import type { Transaction } from "../lib/firestore";
-import { db } from "../lib/firebase";
+import type { FileParseOutcome, NormalizedTransaction } from "../ingestion/core/types";
+import { upsertTransactions } from "../ingestion/firestoreUpsert";
 import { getMonthKeyFromDateISO } from "../lib/date";
-import { parseAmountToCents } from "../lib/money";
+import type { Transaction } from "../lib/firestore";
+import { formatCurrency } from "../lib/money";
+import { db } from "../lib/firebase";
 import { useAdmin } from "../providers/AdminProvider";
 
 const statusStyles = {
   success: "text-emerald-600",
-  warning: "text-amber-600",
   error: "text-rose-600",
 };
 
 const statusLabels = {
   success: "Sucesso",
-  warning: "Atencao",
   error: "Erro",
 };
 
-type LogEntry = {
-  id: string;
-  status: "success" | "warning" | "error";
-  message: string;
-  detail?: string;
-  timestamp: string;
+const createImportSessionId = () => {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `import-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 };
 
-type BuildResult = {
-  transactions: Transaction[];
-  skipped: number;
-};
-
-const parseDateInput = (raw: string) => {
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return null;
-  }
-  if (/^\\d{4}-\\d{2}-\\d{2}$/.test(trimmed)) {
-    return trimmed;
-  }
-  const match = trimmed.match(/^(\\d{2})[./-](\\d{2})[./-](\\d{4})$/);
-  if (match) {
-    const [, day, month, year] = match;
-    return `${year}-${month}-${day}`;
-  }
-  return null;
-};
-
-const hashString = (value: string) => {
-  let hash = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
-  }
-  return hash.toString(36);
-};
-
-const createImportId = (parserId: string, row: string[]) => {
-  const rawKey = [parserId, ...row].join("|");
-  return `${parserId}-${hashString(rawKey)}`;
-};
-
-const findHeaderIndex = (header: string[], keys: string[]) =>
-  header.findIndex((value) => keys.includes(value));
-
-const buildTransactionsFromParsed = (parsed: ParsedCsv): BuildResult => {
-  const normalizedHeader = normalizeHeader(parsed.header);
-  const dateIndex = findHeaderIndex(normalizedHeader, ["data", "date"]);
-  const amountIndex = findHeaderIndex(normalizedHeader, ["valor", "amount"]);
-  const descriptionIndex = findHeaderIndex(normalizedHeader, [
-    "descricao",
-    "historico",
-    "lancamento",
-    "detalhes",
-    "title",
-  ]);
-  const categoryIndex = findHeaderIndex(normalizedHeader, [
-    "categoria",
-    "category",
-  ]);
-
-  if (dateIndex < 0 || amountIndex < 0) {
-    throw new Error("Cabecalho CSV nao reconhecido");
+const mapTransactionsToFirestore = (
+  outcome: FileParseOutcome,
+  importSessionId: string
+) => {
+  if (outcome.status !== "success") {
+    return [];
   }
 
-  let skipped = 0;
-  const transactions: Transaction[] = [];
-
-  parsed.rows.forEach((row) => {
-    const dateRaw = dateIndex >= 0 ? row[dateIndex] ?? "" : "";
-    const amountRaw = amountIndex >= 0 ? row[amountIndex] ?? "" : "";
-    const dateISO = parseDateInput(dateRaw);
-    const parsedAmount = parseAmountToCents(amountRaw);
-
-    if (!dateISO || parsedAmount === null || parsedAmount === 0) {
-      skipped += 1;
-      return;
-    }
-
-    const amountCents = Math.abs(parsedAmount);
-    const type = parsedAmount < 0 ? "expense" : "income";
-    const description =
-      descriptionIndex >= 0 ? row[descriptionIndex]?.trim() ?? "" : "";
-    const categoryLabel =
-      categoryIndex >= 0 ? row[categoryIndex]?.trim() ?? "" : "";
-
-    transactions.push({
-      id: createImportId(parsed.parserId, row),
-      type,
+  return outcome.result.transactions.map((tx) => {
+    const id = tx.idempotencyKey ?? `imp-${importSessionId}-${tx.rowIndex}`;
+    return {
+      id,
+      type: tx.type,
       paymentMethod: "cash",
-      amountCents,
-      date: dateISO,
-      monthKey: getMonthKeyFromDateISO(dateISO),
-      description: description || undefined,
-      name: categoryLabel || undefined,
-    });
+      amountCents: tx.amountCents,
+      date: tx.dateISO,
+      monthKey: getMonthKeyFromDateISO(tx.dateISO),
+      description: tx.description,
+      name: tx.name,
+      documentNumber: tx.documentNumber,
+      importSessionId,
+      importFileName: outcome.fileName,
+      idempotencyKey: tx.idempotencyKey ?? id,
+    } satisfies Transaction;
   });
-
-  return { transactions, skipped };
 };
 
-const dedupeTransactions = (transactions: Transaction[]) =>
-  Array.from(new Map(transactions.map((tx) => [tx.id, tx])).values());
+const formatAmountLabel = (tx: NormalizedTransaction) =>
+  `${tx.type === "income" ? "+" : "-"} ${formatCurrency(tx.amountCents)}`;
 
 const ImportTransactionsPage = () => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [uploading, setUploading] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [outcomes, setOutcomes] = useState<FileParseOutcome[]>([]);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [formError, setFormError] = useState("");
+  const [importMessage, setImportMessage] = useState("");
+  const [importSessionId, setImportSessionId] = useState<string | null>(null);
   const { effectiveUid, isImpersonating } = useAdmin();
   const canWrite = Boolean(effectiveUid) && !isImpersonating;
 
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const successfulOutcomes = useMemo(
+    () => outcomes.filter((outcome) => outcome.status === "success"),
+    [outcomes]
+  );
 
-    if (!selectedFile) {
+  const totalTransactions = useMemo(
+    () =>
+      successfulOutcomes.reduce(
+        (sum, outcome) => sum + outcome.result.transactions.length,
+        0
+      ),
+    [successfulOutcomes]
+  );
+
+  const handleAnalyze = async () => {
+    if (selectedFiles.length === 0) {
       setFormError("Selecione um arquivo para importar.");
       return;
     }
 
+    setAnalyzing(true);
+    setFormError("");
+    setImportMessage("");
+
+    try {
+      const sessionId = createImportSessionId();
+      setImportSessionId(sessionId);
+      const results = await importUploadedFiles(selectedFiles, {
+        importSessionId: sessionId,
+      });
+      setOutcomes(results);
+
+      if (import.meta.env.DEV) {
+        console.log(
+          "[import] outcomes",
+          results.map((outcome) => ({
+            fileName: outcome.fileName,
+            status: outcome.status,
+            count:
+              outcome.status === "success"
+                ? outcome.result.transactions.length
+                : 0,
+          }))
+        );
+      } else {
+        console.log("[import] outcomes", {
+          totalFiles: results.length,
+          success: results.filter((outcome) => outcome.status === "success").length,
+          failed: results.filter((outcome) => outcome.status === "error").length,
+        });
+      }
+    } catch (error) {
+      setFormError("Nao foi possivel analisar o arquivo.");
+      if (import.meta.env.DEV) {
+        console.error("[import] falha ao analisar", error);
+      }
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const handleImport = async () => {
     if (!canWrite) {
       setFormError("Importacao bloqueada durante a impersonacao.");
       return;
     }
 
-    setUploading(true);
+    if (!effectiveUid) {
+      setFormError("Nao foi possivel identificar o usuario.");
+      return;
+    }
+
+    if (successfulOutcomes.length === 0 || !importSessionId) {
+      setFormError("Nenhum arquivo valido para importar.");
+      return;
+    }
+
+    setImporting(true);
     setFormError("");
+    setImportMessage("");
 
     try {
-      const results = await importUploadedFiles([selectedFile]);
-      const entries: LogEntry[] = [];
+      const allTransactions = successfulOutcomes.flatMap((outcome) =>
+        mapTransactionsToFirestore(outcome, importSessionId)
+      );
 
-      for (const result of results) {
-        const timestamp = new Date().toLocaleString("pt-BR");
-
-        if (result.status === "error") {
-          entries.push({
-            id: `${result.fileName}-${Date.now()}`,
-            status: "error",
-            message: `Falha ao importar ${result.fileName}.`,
-            detail: result.error,
-            timestamp,
-          });
-          continue;
-        }
-
-        if (!effectiveUid) {
-          entries.push({
-            id: `${result.fileName}-${Date.now()}`,
-            status: "error",
-            message: `Nao foi possivel identificar o usuario.`,
-            detail: "Conecte-se novamente antes de importar.",
-            timestamp,
-          });
-          continue;
-        }
-
-        const { transactions, skipped } = buildTransactionsFromParsed(
-          result.parsed
-        );
-        const deduped = dedupeTransactions(transactions);
-
-        if (deduped.length === 0) {
-          entries.push({
-            id: `${result.fileName}-${Date.now()}`,
-            status: "warning",
-            message: `Nenhuma transacao valida encontrada em ${result.fileName}.`,
-            detail: skipped
-              ? `${skipped} linha(s) ignoradas por falta de dados.`
-              : "Verifique o formato do arquivo.",
-            timestamp,
-          });
-          continue;
-        }
-
-        const { written, batches } = await upsertTransactions(
-          db,
-          effectiveUid,
-          deduped
-        );
-
-        entries.push({
-          id: `${result.fileName}-${Date.now()}`,
-          status: "success",
-          message: `Transacoes importadas de ${result.fileName}.`,
-          detail: `Gravadas ${written} de ${deduped.length}. Batches: ${batches}. Ignoradas: ${skipped}.`,
-          timestamp,
-        });
+      if (allTransactions.length === 0) {
+        setFormError("Nenhuma transacao valida encontrada.");
+        return;
       }
 
-      setLogs((prev) => [...entries, ...prev]);
-      setSelectedFile(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
+      const { written, batches } = await upsertTransactions(
+        db,
+        effectiveUid,
+        allTransactions
+      );
+      setImportMessage(
+        `Transacoes importadas: ${written}. Batches: ${batches}.`
+      );
     } catch (error) {
+      setFormError("Nao foi possivel importar o arquivo. Tente novamente.");
       if (import.meta.env.DEV) {
         console.error("[import] falha na importacao", error);
       }
-      setFormError("Nao foi possivel importar o arquivo. Tente novamente.");
     } finally {
-      setUploading(false);
+      setImporting(false);
+    }
+  };
+
+  const resetForm = () => {
+    setSelectedFiles([]);
+    setOutcomes([]);
+    setImportSessionId(null);
+    setFormError("");
+    setImportMessage("");
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
     }
   };
 
@@ -245,7 +205,7 @@ const ImportTransactionsPage = () => {
               </p>
             </div>
 
-            <form className="space-y-4" onSubmit={handleSubmit}>
+            <div className="space-y-4">
               <label className="block">
                 <span className="text-sm font-medium text-slate-700">
                   Arquivo de transacoes
@@ -254,17 +214,26 @@ const ImportTransactionsPage = () => {
                   ref={fileInputRef}
                   type="file"
                   accept=".csv"
+                  multiple
                   className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 file:mr-4 file:rounded-full file:border-0 file:bg-emerald-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-emerald-700 hover:file:bg-emerald-100"
                   onChange={(event) =>
-                    setSelectedFile(event.currentTarget.files?.[0] ?? null)
+                    setSelectedFiles(
+                      event.currentTarget.files
+                        ? Array.from(event.currentTarget.files)
+                        : []
+                    )
                   }
                 />
               </label>
 
-              {selectedFile ? (
+              {selectedFiles.length > 0 ? (
                 <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                  <p className="font-semibold">Arquivo selecionado</p>
-                  <p>{selectedFile.name}</p>
+                  <p className="font-semibold">Arquivos selecionados</p>
+                  <ul className="mt-2 space-y-1 text-xs text-emerald-700">
+                    {selectedFiles.map((file) => (
+                      <li key={file.name}>{file.name}</li>
+                    ))}
+                  </ul>
                 </div>
               ) : null}
 
@@ -272,25 +241,38 @@ const ImportTransactionsPage = () => {
                 <p className="text-sm text-rose-500">{formError}</p>
               ) : null}
 
+              {importMessage ? (
+                <p className="text-sm text-emerald-600">{importMessage}</p>
+              ) : null}
+
+              {!canWrite ? (
+                <p className="text-xs text-amber-600">
+                  Importacao bloqueada durante a impersonacao.
+                </p>
+              ) : null}
+
               <div className="flex flex-wrap gap-3">
-                <Button type="submit" loading={uploading}>
-                  Importar arquivo
+                <Button
+                  type="button"
+                  onClick={handleAnalyze}
+                  loading={analyzing}
+                  disabled={selectedFiles.length === 0}
+                >
+                  Analisar arquivos
                 </Button>
                 <Button
                   type="button"
-                  variant="secondary"
-                  onClick={() => {
-                    setSelectedFile(null);
-                    setFormError("");
-                    if (fileInputRef.current) {
-                      fileInputRef.current.value = "";
-                    }
-                  }}
+                  onClick={handleImport}
+                  loading={importing}
+                  disabled={!canWrite || successfulOutcomes.length === 0}
                 >
+                  Importar transacoes
+                </Button>
+                <Button type="button" variant="secondary" onClick={resetForm}>
                   Limpar
                 </Button>
               </div>
-            </form>
+            </div>
           </div>
         </Card>
 
@@ -298,48 +280,110 @@ const ImportTransactionsPage = () => {
           <div className="space-y-4">
             <div>
               <h2 className="text-lg font-semibold text-slate-900">
-                Log de importacao
+                Resultado por arquivo
               </h2>
               <p className="text-sm text-slate-600">
-                Acompanhe aqui o status dos arquivos enviados e mensagens de
-                validacao.
+                Analise o resultado antes de confirmar a importacao.
               </p>
             </div>
 
-            {logs.length === 0 ? (
+            {outcomes.length === 0 ? (
               <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-                Nenhum arquivo importado ainda.
+                Nenhum arquivo analisado ainda.
               </div>
             ) : (
               <div className="space-y-3">
-                {logs.map((log) => (
+                {outcomes.map((outcome) => (
                   <div
-                    key={log.id}
+                    key={outcome.fileName}
                     className="rounded-lg border border-slate-200 bg-white px-4 py-3"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span
-                        className={`text-xs font-semibold uppercase tracking-[0.2em] ${statusStyles[log.status]}`}
+                        className={`text-xs font-semibold uppercase tracking-[0.2em] ${
+                          statusStyles[outcome.status]
+                        }`}
                       >
-                        {statusLabels[log.status]}
+                        {statusLabels[outcome.status]}
                       </span>
                       <span className="text-xs text-slate-500">
-                        {log.timestamp}
+                        {outcome.fileName}
                       </span>
                     </div>
                     <p className="mt-2 text-sm font-medium text-slate-800">
-                      {log.message}
+                      {outcome.status === "success"
+                        ? `${outcome.result.transactions.length} transacoes validas`
+                        : outcome.message}
                     </p>
-                    {log.detail ? (
-                      <p className="mt-1 text-xs text-slate-500">{log.detail}</p>
+                    {outcome.status === "success" ? (
+                      <p className="mt-1 text-xs text-slate-500">
+                        Ignoradas: {outcome.result.skipped}. Avisos:{" "}
+                        {outcome.result.warnings.length}.
+                      </p>
                     ) : null}
                   </div>
                 ))}
               </div>
             )}
+
+            {totalTransactions > 0 ? (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
+                Total de transacoes prontas para importar: {totalTransactions}
+              </div>
+            ) : null}
           </div>
         </Card>
       </div>
+
+      {successfulOutcomes.length > 0 ? (
+        <Card className="mt-6">
+          <h2 className="text-lg font-semibold text-slate-900">
+            Preview das transacoes (ate 20 por arquivo)
+          </h2>
+          <p className="text-sm text-slate-500">
+            Verifique os dados antes de confirmar a importacao.
+          </p>
+
+          <div className="mt-4 space-y-6">
+            {successfulOutcomes.map((outcome) => (
+              <div key={`${outcome.fileName}-preview`} className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-slate-900">
+                    {outcome.fileName}
+                  </p>
+                  <span className="text-xs text-slate-500">
+                    {outcome.result.transactions.length} transacoes
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="text-xs uppercase text-slate-400">
+                      <tr>
+                        <th className="py-2">Data</th>
+                        <th className="py-2">Descricao</th>
+                        <th className="py-2 text-right">Valor</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-sm text-slate-700">
+                      {outcome.preview.map((tx) => (
+                        <tr key={`${outcome.fileName}-${tx.rowIndex}`}>
+                          <td className="py-2">{tx.dateISO}</td>
+                          <td className="py-2">
+                            {tx.description || tx.name || "-"}
+                          </td>
+                          <td className="py-2 text-right">
+                            {formatAmountLabel(tx)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
     </AppShell>
   );
 };

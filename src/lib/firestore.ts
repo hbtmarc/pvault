@@ -62,6 +62,10 @@ export type Transaction = {
   name?: string;
   notes?: string;
   paymentKind?: PaymentKind;
+  importSessionId?: string;
+  importFileName?: string;
+  idempotencyKey?: string;
+  documentNumber?: string;
   cardId?: string;
   statementMonthKey?: string;
   installmentGroupId?: string;
@@ -218,6 +222,10 @@ type TransactionInput = {
   name?: string;
   notes?: string;
   paymentKind?: PaymentKind;
+  importSessionId?: string;
+  importFileName?: string;
+  idempotencyKey?: string;
+  documentNumber?: string;
   cardId?: string;
   statementMonthKey?: string;
   installmentGroupId?: string;

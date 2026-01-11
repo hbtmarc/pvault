@@ -1,4 +1,4 @@
-export const parseCsvRows = (text: string): string[][] => {
+export const parseCsvRows = (text: string, delimiter: string): string[][] => {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
@@ -18,7 +18,7 @@ export const parseCsvRows = (text: string): string[][] => {
       continue;
     }
 
-    if (!inQuotes && char === ",") {
+    if (!inQuotes && char === delimiter) {
       row.push(field);
       field = "";
       continue;
@@ -47,12 +47,3 @@ export const parseCsvRows = (text: string): string[][] => {
 
   return rows;
 };
-
-export const normalizeHeader = (header: string[]): string[] =>
-  header.map((field) =>
-    field
-      .trim()
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-  );

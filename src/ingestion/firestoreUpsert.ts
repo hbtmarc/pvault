@@ -32,7 +32,10 @@ export const upsertTransactions = async (
     chunk.forEach((tx) => {
       const { id, ...payload } = tx;
       const ref = doc(db, "users", uid, "transactions", id);
-      batch.set(ref, payload, { merge: true });
+      const cleaned = Object.fromEntries(
+        Object.entries(payload).filter(([, value]) => value !== undefined)
+      );
+      batch.set(ref, cleaned, { merge: true });
     });
 
     await batch.commit();

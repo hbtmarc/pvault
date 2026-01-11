@@ -2,8 +2,8 @@ const REPLACEMENT_CHAR = "\uFFFD";
 
 const hasReplacementChar = (text: string): boolean => text.includes(REPLACEMENT_CHAR);
 
-export const readTextWithAutoEncoding = async (file: File): Promise<string> => {
-  const buffer = await file.arrayBuffer();
+export const decodeText = async (file: File | ArrayBuffer): Promise<string> => {
+  const buffer = file instanceof ArrayBuffer ? file : await file.arrayBuffer();
   const utf8Text = new TextDecoder("utf-8", { fatal: false }).decode(buffer);
 
   if (!hasReplacementChar(utf8Text)) {
