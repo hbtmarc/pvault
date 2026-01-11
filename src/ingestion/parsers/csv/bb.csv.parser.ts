@@ -75,10 +75,14 @@ export class BbCsvParser implements IngestionParser {
           : undefined;
 
       const normalizedDesc = normalizeText(description || extraDescription || "");
+      const normalizedLaunch = normalizeText(launchTrimmed);
+      const normalizedDetails = normalizeText(detailsTrimmed);
+      const isBalanceLine = (value: string) =>
+        value === "saldo" || value === "saldo anterior" || value.startsWith("saldo ");
       if (
-        normalizedDesc === "saldo" ||
-        normalizedDesc === "saldo anterior" ||
-        normalizedDesc.startsWith("saldo ")
+        isBalanceLine(normalizedDesc) ||
+        isBalanceLine(normalizedLaunch) ||
+        isBalanceLine(normalizedDetails)
       ) {
         addRow(result, {
           rowId: "",
