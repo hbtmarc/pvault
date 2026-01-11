@@ -1,7 +1,7 @@
 import { parseDateToISO } from "../../core/parseDate";
 import { parseMoneyToCents } from "../../core/parseMoney";
 import { normalizeHeader } from "../../core/normalizeHeader";
-import { addError, addWarning, createParseResult, incrementSkipped } from "../../core/result";
+import { addError, addRow, createParseResult } from "../../core/result";
 import type { IngestionContext, IngestionParser, ParseResult } from "../../core/types";
 import { normalizeText } from "../../../lib/normalizeText";
 
@@ -59,6 +59,14 @@ export class BbCsvParser implements IngestionParser {
 
       const detailsTrimmed = detailsRaw.trim();
       const launchTrimmed = launchRaw.trim();
+
+      const raw = {
+        data: dateRaw.trim(),
+        lancamento: launchTrimmed,
+        detalhes: detailsTrimmed,
+        valor: amountRaw.trim(),
+      };
+
       const description = detailsTrimmed || launchTrimmed;
       const extraDescription =
         detailsTrimmed && launchTrimmed && detailsTrimmed !== launchTrimmed
@@ -71,37 +79,112 @@ export class BbCsvParser implements IngestionParser {
         normalizedDesc === "saldo anterior" ||
         normalizedDesc.startsWith("saldo ")
       ) {
-        incrementSkipped(result);
-        addWarning(result, `Linha ${rowIndex}: saldo ignorado`);
+        addRow(result, {
+          rowId: "",
+          rowIndex,
+          status: "ignored",
+          reasonCode: "BALANCE_LINE",
+          reasonMessage: "Linha de saldo do extrato",
+          raw,
+        });
         return;
       }
 
-      const dateISO = parseDateToISO(dateRaw);
-      const parsedAmount = parseMoneyToCents(amountRaw);
-
-      if (!dateISO || parsedAmount === null || parsedAmount === 0) {
-        incrementSkipped(result);
-        addWarning(result, `Linha ${rowIndex}: dados invalidos`);
+      if (!raw.data) {
+        addRow(result, {
+          rowId: "",
+          rowIndex,
+          status: "ignored",
+          reasonCode: "MISSING_DATE",
+          reasonMessage: "Data ausente",
+          raw,
+        });
         return;
       }
 
-      let type: "income" | "expense" = parsedAmount < 0 ? "expense" : "income";
+      if (!raw.valor) {
+        addRow(result, {
+          rowId: "",
+          rowIndex,
+          status: "ignored",
+          reasonCode: "MISSING_AMOUNT",
+          reasonMessage: "Valor ausente",
+          raw,
+        });
+        return;
+      }
+
+      const dateISO = parseDateToISO(raw.data);
+      if (!dateISO) {
+        addRow(result, {
+          rowId: "",
+          rowIndex,
+          status: "ignored",
+          reasonCode: "INVALID_DATE",
+          reasonMessage: "Data invalida",
+          raw,
+        });
+        return;
+      }
+
+      const parsedAmount = parseMoneyToCents(raw.valor);
+      if (parsedAmount === null) {
+        addRow(result, {
+          rowId: "",
+          rowIndex,
+          status: "ignored",
+          reasonCode: "INVALID_AMOUNT",
+          reasonMessage: "Valor invalido",
+          raw,
+        });
+        return;
+      }
+
+      const amountCents = Math.abs(parsedAmount);
+      if (amountCents === 0) {
+        addRow(result, {
+          rowId: "",
+          rowIndex,
+          status: "ignored",
+          reasonCode: "ZERO_AMOUNT",
+          reasonMessage: "Valor zerado",
+          raw,
+        });
+        return;
+      }
+
+      let kind: "income" | "expense" = parsedAmount < 0 ? "expense" : "income";
       const normalizedType = typeRaw.trim().toLowerCase();
       if (normalizedType.includes("entrada")) {
-        type = "income";
+        kind = "income";
       }
       if (normalizedType.includes("saida")) {
-        type = "expense";
+        kind = "expense";
       }
 
-      result.transactions.push({
-        dateISO,
-        amountCents: Math.abs(parsedAmount),
-        type,
-        description: description || undefined,
-        extraDescription,
-        documentNumber: documentRaw.trim() || undefined,
+      const hasDescription = Boolean(description);
+      const status = hasDescription ? "valid" : "warning";
+      const reasonCode = hasDescription ? "OK" : "MISSING_DESCRIPTION";
+      const reasonMessage = hasDescription ? "Linha valida" : "Descricao ausente";
+
+      addRow(result, {
+        rowId: "",
         rowIndex,
+        status,
+        reasonCode,
+        reasonMessage,
+        raw,
+        txCandidate: {
+          dateISO,
+          amountCents,
+          kind,
+          description: description || undefined,
+          extraDescription,
+          documentNumber: documentRaw.trim() || undefined,
+          rowIndex,
+          source: "bb",
+          accountType: "checking",
+        },
       });
     });
 

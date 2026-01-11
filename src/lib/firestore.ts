@@ -37,6 +37,8 @@ export type Direction = "income" | "expense";
 
 export type TransactionType = Direction | "transfer";
 
+export type TransactionKind = TransactionType;
+
 export type PaymentMethod = "cash" | "card";
 
 export type TransactionSourceType = "manual" | "recurring";
@@ -60,7 +62,7 @@ export type MerchantCategoryRule = {
 export type Transaction = {
   id: string;
   type: TransactionType;
-  kind?: Direction;
+  kind?: TransactionKind;
   paymentMethod: PaymentMethod;
   amountCents: number;
   date: string;
@@ -225,7 +227,7 @@ type CategoryInput = {
 
 type TransactionInput = {
   type: TransactionType;
-  kind?: Direction;
+  kind?: TransactionKind;
   paymentMethod: PaymentMethod;
   amountCents: number;
   date: string;
@@ -331,10 +333,16 @@ const mapTransactionSnapshot = (
   const rawPaymentMethod =
     (data.paymentMethod as PaymentMethod) ?? (data.cardId ? "card" : "cash");
 
+  const rawKind =
+    (data.kind as TransactionKind) ??
+    (rawType === "income" || rawType === "expense" || rawType === "transfer"
+      ? rawType
+      : undefined);
+
   return {
     id: item.id,
     type: rawType,
-    kind: (data.kind as Direction) ?? undefined,
+    kind: rawKind,
     paymentMethod: rawPaymentMethod,
     amountCents: (data.amountCents as number) ?? 0,
     date: (data.date as string) ?? "",
@@ -732,8 +740,7 @@ export const createTransaction = async (uid: string, data: TransactionInput) => 
     updatedAt: serverTimestamp(),
   };
 
-  const resolvedKind =
-    data.kind ?? (data.type === "income" || data.type === "expense" ? data.type : undefined);
+  const resolvedKind = data.kind ?? data.type;
   if (resolvedKind) {
     payload.kind = resolvedKind;
   }
@@ -826,8 +833,7 @@ export const updateTransaction = async (
     updatedAt: serverTimestamp(),
   };
 
-  const resolvedKind =
-    data.kind ?? (data.type === "income" || data.type === "expense" ? data.type : undefined);
+  const resolvedKind = data.kind ?? data.type;
   payload.kind = resolvedKind ? resolvedKind : deleteField();
 
   if (data.name !== undefined) {
@@ -960,16 +966,14 @@ export const listCardTransactionsByStatement = (
     transactionsCollection(uid),
     where("cardId", "==", cardId),
     where("invoiceMonthKey", "==", statementMonthKey),
-    where("paymentMethod", "==", "card"),
-    orderBy("date", "desc")
+    where("paymentMethod", "==", "card")
   );
 
   const legacyQuery = query(
     transactionsCollection(uid),
     where("cardId", "==", cardId),
     where("statementMonthKey", "==", statementMonthKey),
-    where("paymentMethod", "==", "card"),
-    orderBy("date", "desc")
+    where("paymentMethod", "==", "card")
   );
 
   let invoiceItems: Transaction[] = [];
@@ -1151,11 +1155,16 @@ export const fetchStatementTotal = async (
       (data.type as TransactionType) ??
       (data.direction as Direction) ??
       "expense";
+    const rawKind =
+      (data.kind as TransactionKind) ??
+      (rawType === "income" || rawType === "expense" || rawType === "transfer"
+        ? rawType
+        : undefined);
     const amount = (data.amountCents as number) ?? 0;
-    if (rawType === "income") {
+    if (rawKind === "income") {
       return sum - amount;
     }
-    if (rawType === "expense") {
+    if (rawKind === "expense") {
       return sum + amount;
     }
     return sum;

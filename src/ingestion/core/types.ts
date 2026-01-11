@@ -1,13 +1,29 @@
-export type NormalizedTransaction = {
+export type TransactionKind = "income" | "expense" | "transfer";
+
+export type TransactionCandidate = {
   dateISO: string;
   amountCents: number;
-  type: "income" | "expense";
+  kind: TransactionKind;
   description?: string;
   extraDescription?: string;
   name?: string;
   documentNumber?: string;
   rowIndex: number;
+  source?: string;
+  accountType?: string;
   idempotencyKey?: string;
+};
+
+export type RowStatus = "valid" | "warning" | "ignored";
+
+export type RowResult = {
+  rowId: string;
+  rowIndex: number;
+  status: RowStatus;
+  reasonCode: string;
+  reasonMessage: string;
+  raw: Record<string, string>;
+  txCandidate?: TransactionCandidate;
 };
 
 export type IngestionContext = {
@@ -21,10 +37,22 @@ export type IngestionContext = {
 };
 
 export type ParseResult = {
-  transactions: NormalizedTransaction[];
-  warnings: string[];
+  rows: RowResult[];
   errors: string[];
-  skipped: number;
+};
+
+export type ImportCounts = {
+  valid: number;
+  warnings: number;
+  ignored: number;
+};
+
+export type ImportResult = {
+  valid: TransactionCandidate[];
+  warnings: RowResult[];
+  ignored: RowResult[];
+  counts: ImportCounts;
+  preview: TransactionCandidate[];
 };
 
 export type FileParseOutcome =
@@ -32,8 +60,7 @@ export type FileParseOutcome =
       fileName: string;
       status: "success";
       parserId: string;
-      result: ParseResult;
-      preview: NormalizedTransaction[];
+      result: ImportResult;
     }
   | {
       fileName: string;

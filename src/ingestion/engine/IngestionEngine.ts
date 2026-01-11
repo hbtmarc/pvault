@@ -7,7 +7,8 @@ import { createParseResult, hasErrors } from "../core/result";
 import type {
   FileParseOutcome,
   IngestionContext,
-  NormalizedTransaction,
+  ImportResult,
+  RowResult,
   ParseResult,
 } from "../core/types";
 import { ParserRegistry } from "./ParserRegistry";
@@ -20,10 +21,14 @@ const createImportSessionId = () => {
 };
 
 const withIdempotencyKeys = async (
-  transactions: NormalizedTransaction[],
+  rows: RowResult[],
   context: IngestionContext
 ) => {
-  const updates = transactions.map(async (tx) => {
+  const updates = rows.map(async (row) => {
+    if (!row.txCandidate) {
+      return row;
+    }
+    const tx = row.txCandidate;
     const rowKey = tx.rowIndex.toString();
     const rawKey = [
       context.fileHash,
@@ -31,16 +36,40 @@ const withIdempotencyKeys = async (
       rowKey,
       tx.dateISO,
       tx.amountCents,
-      tx.type,
+      tx.kind,
       tx.description ?? "",
       tx.name ?? "",
       tx.documentNumber ?? "",
     ].join("|");
     const digest = await hashStringSha256(rawKey);
-    return { ...tx, idempotencyKey: `imp_${digest}` };
+    return {
+      ...row,
+      txCandidate: { ...tx, idempotencyKey: `imp_${digest}` },
+    };
   });
 
   return Promise.all(updates);
+};
+
+const buildImportResult = (rows: RowResult[]): ImportResult => {
+  const validRows = rows.filter((row) => row.status === "valid");
+  const warnings = rows.filter((row) => row.status === "warning");
+  const ignored = rows.filter((row) => row.status === "ignored");
+  const valid = validRows
+    .map((row) => row.txCandidate)
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+  return {
+    valid,
+    warnings,
+    ignored,
+    counts: {
+      valid: valid.length,
+      warnings: warnings.length,
+      ignored: ignored.length,
+    },
+    preview: valid.slice(0, 20),
+  };
 };
 
 export class IngestionEngine {
@@ -116,22 +145,19 @@ export class IngestionEngine {
             } as FileParseOutcome;
           }
 
-          const transactionsWithKeys = await withIdempotencyKeys(
-            result.transactions,
-            context
-          );
+          const rowsWithKeys = await withIdempotencyKeys(result.rows, context);
+          const rowsWithIds = rowsWithKeys.map((row) => ({
+            ...row,
+            rowId: row.rowId || `${context.fileHash}:${row.rowIndex}`,
+          }));
 
-          const preview = transactionsWithKeys.slice(0, 20);
+          const importResult = buildImportResult(rowsWithIds);
 
           return {
             fileName,
             status: "success",
             parserId: parser.id,
-            result: {
-              ...result,
-              transactions: transactionsWithKeys,
-            },
-            preview,
+            result: importResult,
           } as FileParseOutcome;
         } catch (error) {
           const message =

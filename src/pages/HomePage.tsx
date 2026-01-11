@@ -37,6 +37,9 @@ import { formatCurrency } from "../lib/money";
 import { buildMerchantKey } from "../lib/merchantRules";
 import { useAdmin } from "../providers/AdminProvider";
 
+const resolveTransactionKind = (transaction: Transaction) =>
+  transaction.kind ?? transaction.type;
+
 const HomePage = () => {
   const { authUid, effectiveUid, isImpersonating } = useAdmin();
   const { monthKey } = useMonthKey();
@@ -164,22 +167,25 @@ const HomePage = () => {
     return () => unsubscribe();
   }, [effectiveUid]);
 
-  const totals = useMemo(() => {
-    return transactions.reduce(
-      (acc, transaction) => {
-        if (transaction.type === "transfer") {
+  const totals = useMemo(
+    () =>
+      transactions.reduce(
+        (acc, transaction) => {
+          const kind = resolveTransactionKind(transaction);
+          if (kind === "transfer") {
+            return acc;
+          }
+          if (kind === "income") {
+            acc.income += transaction.amountCents;
+          } else if (kind === "expense") {
+            acc.expense += transaction.amountCents;
+          }
           return acc;
-        }
-        if (transaction.type === "income") {
-          acc.income += transaction.amountCents;
-        } else {
-          acc.expense += transaction.amountCents;
-        }
-        return acc;
-      },
-      { income: 0, expense: 0 }
-    );
-  }, [transactions]);
+        },
+        { income: 0, expense: 0 }
+      ),
+    [transactions]
+  );
 
   const totalAllocated = useMemo(
     () => budgets.reduce((sum, budget) => sum + budget.allocatedCents, 0),
@@ -238,7 +244,7 @@ const HomePage = () => {
     if (!canWrite) {
       return;
     }
-    if (transaction.type === "transfer" || transaction.installmentPlanId) {
+    if (resolveTransactionKind(transaction) === "transfer" || transaction.installmentPlanId) {
       return;
     }
     setEditing(transaction);
@@ -357,7 +363,7 @@ const HomePage = () => {
     if (!authUid || !canWrite) {
       return;
     }
-    if (transaction.type === "transfer") {
+    if (resolveTransactionKind(transaction) === "transfer") {
       return;
     }
 
@@ -573,6 +579,7 @@ const HomePage = () => {
 
         <div className="mt-4 space-y-3">
           {transactions.map((transaction) => {
+            const kind = resolveTransactionKind(transaction);
             const categoryName =
               categoriesById.get(transaction.categoryId ?? "")?.name ??
               (transaction.categoryId ? "Categoria removida" : "Sem categoria");
@@ -584,15 +591,15 @@ const HomePage = () => {
               : "";
             const isArchivedCard = Boolean(cardInfo?.archived);
             const badgeStyles =
-              transaction.type === "income"
+              kind === "income"
                 ? "bg-emerald-100 text-emerald-700"
-                : transaction.type === "expense"
+                : kind === "expense"
                   ? "bg-rose-100 text-rose-700"
                   : "bg-slate-200 text-slate-700";
             const typeLabel =
-              transaction.type === "transfer"
+              kind === "transfer"
                 ? "Transferencia"
-                : transaction.type === "income"
+                : kind === "income"
                   ? "Receita"
                   : "Despesa";
             const hasInstallment =
@@ -607,12 +614,12 @@ const HomePage = () => {
             const canEditTransaction =
               canWrite &&
               !hasInstallment &&
-              transaction.type !== "transfer" &&
+              kind !== "transfer" &&
               !(transaction.paymentMethod === "card" && isArchivedCard);
-            const canDeleteTransaction = canWrite && transaction.type !== "transfer";
+            const canDeleteTransaction = canWrite && kind !== "transfer";
             const primaryDescription =
               transaction.description?.trim() ||
-              (transaction.type === "transfer" ? "Pagamento de fatura" : categoryName);
+              (kind === "transfer" ? "Pagamento de fatura" : categoryName);
             const invoiceLabel =
               transaction.invoiceMonthKey ?? transaction.statementMonthKey ?? "-";
 

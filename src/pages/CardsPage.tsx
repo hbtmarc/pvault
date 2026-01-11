@@ -21,6 +21,9 @@ import {
 import { formatCentsToInput, formatCurrency, parseBRLToCents } from "../lib/money";
 import { useAdmin } from "../providers/AdminProvider";
 
+const resolveTransactionKind = (transaction: Transaction) =>
+  transaction.kind ?? transaction.type;
+
 const CardsPage = () => {
   const { authUid, effectiveUid, isImpersonating } = useAdmin();
   const { monthKey } = useMonthKey();
@@ -99,15 +102,16 @@ const CardsPage = () => {
   const statementTotals = useMemo(() => {
     const totals = new Map<string, number>();
     statementTransactions.forEach((transaction) => {
+      const kind = resolveTransactionKind(transaction);
       if (!transaction.cardId) {
         return;
       }
-      if (transaction.type === "transfer") {
+      if (kind === "transfer") {
         return;
       }
       const current = totals.get(transaction.cardId) ?? 0;
       const delta =
-        transaction.type === "income"
+        kind === "income"
           ? -transaction.amountCents
           : transaction.amountCents;
       totals.set(transaction.cardId, current + delta);

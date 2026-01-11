@@ -1,8 +1,9 @@
 import { parseDateToISO } from "../../core/parseDate";
 import { parseMoneyToCents } from "../../core/parseMoney";
 import { normalizeHeader } from "../../core/normalizeHeader";
-import { addError, addWarning, createParseResult, incrementSkipped } from "../../core/result";
+import { addError, addRow, createParseResult } from "../../core/result";
 import type { IngestionContext, IngestionParser, ParseResult } from "../../core/types";
+import { normalizeText } from "../../../lib/normalizeText";
 
 const REQUIRED_FIELDS = ["date", "title", "amount"];
 
@@ -34,25 +35,123 @@ export class NubankCsvParser implements IngestionParser {
       const titleRaw = row[titleIndex] ?? "";
       const amountRaw = row[amountIndex] ?? "";
 
-      const dateISO = parseDateToISO(dateRaw);
-      const parsedAmount = parseMoneyToCents(amountRaw);
+      const raw = {
+        date: dateRaw.trim(),
+        title: titleRaw.trim(),
+        amount: amountRaw.trim(),
+      };
 
-      if (!dateISO || parsedAmount === null || parsedAmount === 0) {
-        incrementSkipped(result);
-        addWarning(result, `Linha ${rowIndex}: dados invalidos`);
+      if (!raw.date) {
+        addRow(result, {
+          rowId: "",
+          rowIndex,
+          status: "ignored",
+          reasonCode: "MISSING_DATE",
+          reasonMessage: "Data ausente",
+          raw,
+        });
+        return;
+      }
+
+      if (!raw.amount) {
+        addRow(result, {
+          rowId: "",
+          rowIndex,
+          status: "ignored",
+          reasonCode: "MISSING_AMOUNT",
+          reasonMessage: "Valor ausente",
+          raw,
+        });
+        return;
+      }
+
+      const dateISO = parseDateToISO(raw.date);
+      if (!dateISO) {
+        addRow(result, {
+          rowId: "",
+          rowIndex,
+          status: "ignored",
+          reasonCode: "INVALID_DATE",
+          reasonMessage: "Data invalida",
+          raw,
+        });
+        return;
+      }
+
+      const parsedAmount = parseMoneyToCents(raw.amount);
+      if (parsedAmount === null) {
+        addRow(result, {
+          rowId: "",
+          rowIndex,
+          status: "ignored",
+          reasonCode: "INVALID_AMOUNT",
+          reasonMessage: "Valor invalido",
+          raw,
+        });
         return;
       }
 
       const amountCents = Math.abs(parsedAmount);
-      const type = parsedAmount < 0 ? "expense" : "income";
+      if (amountCents === 0) {
+        addRow(result, {
+          rowId: "",
+          rowIndex,
+          status: "ignored",
+          reasonCode: "ZERO_AMOUNT",
+          reasonMessage: "Valor zerado",
+          raw,
+        });
+        return;
+      }
 
-      result.transactions.push({
-        dateISO,
-        amountCents,
-        type,
-        description: titleRaw.trim() || undefined,
-        name: undefined,
+      const title = raw.title;
+      const normalizedTitle = normalizeText(title);
+
+      if (normalizedTitle.includes("pagamento recebido")) {
+        addRow(result, {
+          rowId: "",
+          rowIndex,
+          status: "ignored",
+          reasonCode: "CARD_PAYMENT",
+          reasonMessage: "Pagamento de fatura (neutro)",
+          raw,
+          txCandidate: {
+            dateISO,
+            amountCents,
+            kind: "transfer",
+            description: title || undefined,
+            rowIndex,
+            source: "nubank",
+            accountType: "credit_card",
+          },
+        });
+        return;
+      }
+
+      const isRefund =
+        normalizedTitle.includes("estorno") || normalizedTitle.includes("reembolso");
+      const kind = isRefund ? "income" : "expense";
+      const hasDescription = Boolean(title);
+      const status = hasDescription ? "valid" : "warning";
+      const reasonCode = hasDescription ? "OK" : "MISSING_DESCRIPTION";
+      const reasonMessage = hasDescription ? "Linha valida" : "Descricao ausente";
+
+      addRow(result, {
+        rowId: "",
         rowIndex,
+        status,
+        reasonCode,
+        reasonMessage,
+        raw,
+        txCandidate: {
+          dateISO,
+          amountCents,
+          kind,
+          description: title || undefined,
+          rowIndex,
+          source: "nubank",
+          accountType: "credit_card",
+        },
       });
     });
 

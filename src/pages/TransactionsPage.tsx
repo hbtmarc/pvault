@@ -36,6 +36,9 @@ import { formatCurrency } from "../lib/money";
 import { buildMerchantKey } from "../lib/merchantRules";
 import { useAdmin } from "../providers/AdminProvider";
 
+const resolveTransactionKind = (transaction: Transaction) =>
+  transaction.kind ?? transaction.type;
+
 const TransactionsPage = () => {
   const { authUid, effectiveUid, isImpersonating } = useAdmin();
   const { monthKey } = useMonthKey();
@@ -188,9 +191,10 @@ const TransactionsPage = () => {
     () =>
       transactions.reduce(
         (acc, transaction) => {
-          if (transaction.type === "income") {
+          const kind = resolveTransactionKind(transaction);
+          if (kind === "income") {
             acc.income += transaction.amountCents;
-          } else if (transaction.type === "expense") {
+          } else if (kind === "expense") {
             acc.expense += transaction.amountCents;
           }
           return acc;
@@ -213,7 +217,7 @@ const TransactionsPage = () => {
     if (!canWrite) {
       return;
     }
-    if (transaction.type === "transfer" || transaction.installmentPlanId) {
+    if (resolveTransactionKind(transaction) === "transfer" || transaction.installmentPlanId) {
       return;
     }
     setEditing(transaction);
@@ -332,7 +336,7 @@ const TransactionsPage = () => {
     if (!authUid || !canWrite) {
       return;
     }
-    if (transaction.type === "transfer") {
+    if (resolveTransactionKind(transaction) === "transfer") {
       return;
     }
 
@@ -510,6 +514,7 @@ const TransactionsPage = () => {
 
         <div className="mt-4 space-y-3">
           {transactions.map((transaction) => {
+            const kind = resolveTransactionKind(transaction);
             const categoryName =
               categoriesById.get(transaction.categoryId ?? "")?.name ??
               (transaction.categoryId ? "Categoria removida" : "Sem categoria");
@@ -521,15 +526,15 @@ const TransactionsPage = () => {
               : "";
             const isArchivedCard = Boolean(cardInfo?.archived);
             const badgeStyles =
-              transaction.type === "income"
+              kind === "income"
                 ? "bg-emerald-100 text-emerald-700"
-                : transaction.type === "expense"
+                : kind === "expense"
                   ? "bg-rose-100 text-rose-700"
                   : "bg-slate-200 text-slate-700";
             const typeLabel =
-              transaction.type === "transfer"
+              kind === "transfer"
                 ? "Transferencia"
-                : transaction.type === "income"
+                : kind === "income"
                   ? "Receita"
                   : "Despesa";
             const hasInstallment =
@@ -544,12 +549,12 @@ const TransactionsPage = () => {
             const canEditTransaction =
               canWrite &&
               !hasInstallment &&
-              transaction.type !== "transfer" &&
+              kind !== "transfer" &&
               !(transaction.paymentMethod === "card" && isArchivedCard);
-            const canDeleteTransaction = canWrite && transaction.type !== "transfer";
+            const canDeleteTransaction = canWrite && kind !== "transfer";
             const primaryDescription =
               transaction.description?.trim() ||
-              (transaction.type === "transfer" ? "Pagamento de fatura" : categoryName);
+              (kind === "transfer" ? "Pagamento de fatura" : categoryName);
             const invoiceLabel =
               transaction.invoiceMonthKey ?? transaction.statementMonthKey ?? "-";
 

@@ -3,7 +3,12 @@ import AppShell from "../components/AppShell";
 import Button from "../components/Button";
 import Card from "../components/Card";
 import { importUploadedFiles } from "../ingestion/importUploadedFiles";
-import type { FileParseOutcome, ParseResult } from "../ingestion/core/types";
+import type {
+  FileParseOutcome,
+  ImportResult,
+  RowResult,
+  TransactionCandidate,
+} from "../ingestion/core/types";
 import { upsertTransactions } from "../ingestion/firestoreUpsert";
 import { getInvoiceMonthKey, getMonthKeyFromDateISO, shiftMonthKey } from "../lib/date";
 import type {
@@ -12,6 +17,7 @@ import type {
   MerchantCategoryRule,
   PaymentMethod,
   Transaction,
+  TransactionKind,
 } from "../lib/firestore";
 import {
   listCards,
@@ -50,19 +56,27 @@ type ImportPreviewTransaction = {
   dateISO: string;
   description: string;
   amountCents: number;
-  type: "income" | "expense";
+  kind: TransactionKind;
   categoryName: string;
   invoiceMonthKey?: string;
   installmentLabel?: string;
+};
+
+type PreparedRow = {
+  rowId: string;
+  status: "valid" | "warning" | "ignored";
+  preview: ImportPreviewTransaction;
+  transactions: Transaction[];
+  projectedCount: number;
 };
 
 type ImportOutcomeSuccess = {
   status: "success";
   fileName: string;
   parserId: string;
-  result: ParseResult;
-  preview: ImportPreviewTransaction[];
-  preparedTransactions: Transaction[];
+  result: ImportResult;
+  preparedValid: PreparedRow[];
+  preparedOptional: PreparedRow[];
   projectedCount: number;
 };
 
@@ -81,8 +95,17 @@ const DEFAULT_CATEGORY_BY_ID = new Map(
 const isNubankCardFile = (fileName: string) =>
   /nubank_\d{4}-\d{2}-\d{2}\.csv$/i.test(fileName);
 
-const formatAmountLabel = (type: "income" | "expense", amountCents: number) =>
-  `${type === "income" ? "+" : "-"} ${formatCurrency(amountCents)}`;
+const formatAmountLabel = (kind: TransactionKind, amountCents: number) => {
+  if (kind === "income") {
+    return `+ ${formatCurrency(amountCents)}`;
+  }
+  if (kind === "expense") {
+    return `- ${formatCurrency(amountCents)}`;
+  }
+  return formatCurrency(amountCents);
+};
+
+const REVIEW_PAGE_SIZE = 50;
 
 const ImportTransactionsPage = () => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -99,6 +122,12 @@ const ImportTransactionsPage = () => {
   const [merchantRules, setMerchantRules] = useState<MerchantCategoryRule[]>([]);
   const [selectedCardId, setSelectedCardId] = useState("");
   const [seedingCategories, setSeedingCategories] = useState(false);
+  const [selectedRowIdsByFile, setSelectedRowIdsByFile] = useState<
+    Record<string, Set<string>>
+  >({});
+  const [visibleReviewRows, setVisibleReviewRows] = useState<Record<string, number>>(
+    {}
+  );
   const { effectiveUid, isImpersonating } = useAdmin();
   const canWrite = Boolean(effectiveUid) && !isImpersonating;
 
@@ -259,11 +288,18 @@ const ImportTransactionsPage = () => {
 
   const totalTransactions = useMemo(
     () =>
-      successfulOutcomes.reduce(
-        (sum, outcome) => sum + outcome.preparedTransactions.length,
-        0
-      ),
-    [successfulOutcomes]
+      successfulOutcomes.reduce((sum, outcome) => {
+        const selectedIds = getSelectedRowIds(outcome.fileName);
+        const validCount = outcome.preparedValid.reduce(
+          (acc, row) => acc + row.transactions.length,
+          0
+        );
+        const selectedCount = outcome.preparedOptional
+          .filter((row) => selectedIds.has(row.rowId))
+          .reduce((acc, row) => acc + row.transactions.length, 0);
+        return sum + validCount + selectedCount;
+      }, 0),
+    [successfulOutcomes, selectedRowIdsByFile]
   );
 
   const resolveCardIdForFile = (fileName: string) => {
@@ -290,7 +326,11 @@ const ImportTransactionsPage = () => {
     return undefined;
   };
 
-  const resolveCategoryId = (categoryKey: string | undefined, kind: "income" | "expense") => {
+  const resolveCategoryId = (categoryKey: string | undefined, kind: TransactionKind) => {
+    if (kind === "transfer") {
+      return undefined;
+    }
+
     if (!categoryKey) {
       return undefined;
     }
@@ -311,6 +351,53 @@ const ImportTransactionsPage = () => {
       return "Sem categoria";
     }
     return categoriesById.get(categoryId)?.name ?? "Categoria removida";
+  };
+
+  const getSelectedRowIds = (fileName: string) =>
+    selectedRowIdsByFile[fileName] ?? new Set<string>();
+
+  const toggleRowSelection = (fileName: string, rowId: string, selected: boolean) => {
+    setSelectedRowIdsByFile((prev) => {
+      const current = prev[fileName] ?? new Set<string>();
+      const next = new Set(current);
+      if (selected) {
+        next.add(rowId);
+      } else {
+        next.delete(rowId);
+      }
+      return { ...prev, [fileName]: next };
+    });
+  };
+
+  const getVisibleCount = (fileName: string, bucket: "warnings" | "ignored") => {
+    const key = `${fileName}:${bucket}`;
+    return visibleReviewRows[key] ?? REVIEW_PAGE_SIZE;
+  };
+
+  const showMoreRows = (fileName: string, bucket: "warnings" | "ignored") => {
+    const key = `${fileName}:${bucket}`;
+    setVisibleReviewRows((prev) => ({
+      ...prev,
+      [key]: (prev[key] ?? REVIEW_PAGE_SIZE) + REVIEW_PAGE_SIZE,
+    }));
+  };
+
+  const getRowDisplay = (row: RowResult) => {
+    const raw = row.raw ?? {};
+    const date =
+      raw.date || raw.data || row.txCandidate?.dateISO || row.rowIndex.toString();
+    const description =
+      raw.title ||
+      raw.lancamento ||
+      raw.detalhes ||
+      row.txCandidate?.description ||
+      row.txCandidate?.name ||
+      "-";
+    const amount =
+      row.txCandidate && row.txCandidate.amountCents !== undefined
+        ? formatAmountLabel(row.txCandidate.kind, row.txCandidate.amountCents)
+        : raw.amount || raw.valor || "-";
+    return { date, description, amount };
   };
 
   const buildInstallmentGroupId = async (
@@ -351,6 +438,182 @@ const ImportTransactionsPage = () => {
     return `tx_${digest}`;
   };
 
+  const prepareCandidateRow = async (
+    candidate: TransactionCandidate,
+    rowId: string,
+    status: "valid" | "warning" | "ignored",
+    meta: {
+      fileName: string;
+      parserId: string;
+      paymentMethod: PaymentMethod;
+      cardId?: string;
+      card?: CardType;
+      sessionId: string;
+      uid: string;
+    }
+  ): Promise<PreparedRow> => {
+    const rawDescription = candidate.description?.trim() || candidate.name?.trim() || "";
+    const extraDescription = candidate.extraDescription?.trim() || "";
+    const descriptionSeed = rawDescription || extraDescription;
+    const baseDescription = descriptionSeed || "Sem descricao";
+    const kind = candidate.kind;
+
+    const merchantKey = descriptionSeed ? buildMerchantKey(descriptionSeed) : "";
+    const merchantCategoryId = merchantKey
+      ? merchantRulesByKey.get(merchantKey)
+      : undefined;
+    const suggestion = categorizeTransaction(
+      rawDescription,
+      extraDescription,
+      candidate.amountCents,
+      kind
+    );
+    const suggestedCategoryId =
+      merchantCategoryId ?? resolveCategoryId(suggestion.categoryKey, kind);
+    const categoryName = resolveCategoryName(suggestedCategoryId);
+
+    const installmentInfo =
+      meta.paymentMethod === "card" && kind === "expense"
+        ? parseInstallments(rawDescription)
+        : null;
+    const installmentTotal =
+      installmentInfo && installmentInfo.installmentTotal > 1
+        ? installmentInfo.installmentTotal
+        : undefined;
+    const installmentIndex = installmentInfo?.installmentIndex;
+    const description = installmentInfo?.baseDescription?.trim() || baseDescription;
+
+    const invoiceMonthKey =
+      meta.paymentMethod === "card" && meta.card
+        ? getInvoiceMonthKey(candidate.dateISO, meta.card.closingDay)
+        : undefined;
+    const monthKey = getMonthKeyFromDateISO(candidate.dateISO);
+
+    const canProject =
+      meta.paymentMethod === "card" &&
+      meta.cardId &&
+      invoiceMonthKey &&
+      installmentTotal &&
+      installmentIndex &&
+      kind === "expense";
+
+    let installmentGroupId: string | undefined = undefined;
+    let resolvedId = candidate.idempotencyKey ?? `imp-${meta.sessionId}-${candidate.rowIndex}`;
+
+    if (canProject) {
+      installmentGroupId = await buildInstallmentGroupId(
+        meta.uid,
+        meta.cardId!,
+        description,
+        candidate.amountCents,
+        installmentTotal
+      );
+      resolvedId = await buildInstallmentTxId(
+        meta.uid,
+        meta.parserId,
+        meta.cardId!,
+        installmentGroupId,
+        installmentIndex!,
+        invoiceMonthKey!
+      );
+    }
+
+    const baseTransaction: Transaction = {
+      id: resolvedId,
+      type: kind,
+      kind,
+      paymentMethod: meta.paymentMethod,
+      amountCents: candidate.amountCents,
+      date: candidate.dateISO,
+      monthKey,
+      invoiceMonthKey,
+      description,
+      name: candidate.name,
+      documentNumber: candidate.documentNumber,
+      categoryId: suggestedCategoryId,
+      cardId: meta.cardId,
+      statementMonthKey: meta.paymentMethod === "card" ? invoiceMonthKey : undefined,
+      importSessionId: meta.sessionId,
+      importFileName: meta.fileName,
+      idempotencyKey: candidate.idempotencyKey ?? resolvedId,
+      installmentGroupId,
+      installmentIndex: canProject ? installmentIndex : undefined,
+      installmentCount: canProject ? installmentTotal : undefined,
+      installmentTotal: canProject ? installmentTotal : undefined,
+      installmentsTotal: canProject ? installmentTotal : undefined,
+      isProjected: canProject ? false : undefined,
+    };
+
+    const transactions: Transaction[] = [baseTransaction];
+    let projectedCount = 0;
+
+    if (
+      canProject &&
+      installmentTotal &&
+      installmentIndex < installmentTotal &&
+      installmentGroupId
+    ) {
+      for (let index = installmentIndex + 1; index <= installmentTotal; index += 1) {
+        const projectedInvoiceMonthKey = shiftMonthKey(
+          invoiceMonthKey!,
+          index - installmentIndex
+        );
+        const projectedDate = `${projectedInvoiceMonthKey}-01`;
+        const projectedId = await buildInstallmentTxId(
+          meta.uid,
+          meta.parserId,
+          meta.cardId!,
+          installmentGroupId,
+          index,
+          projectedInvoiceMonthKey
+        );
+
+        transactions.push({
+          id: projectedId,
+          type: "expense",
+          kind: "expense",
+          paymentMethod: "card",
+          amountCents: candidate.amountCents,
+          date: projectedDate,
+          monthKey: projectedInvoiceMonthKey,
+          invoiceMonthKey: projectedInvoiceMonthKey,
+          description: `${description} Parcela ${index}/${installmentTotal}`,
+          categoryId: suggestedCategoryId,
+          cardId: meta.cardId,
+          statementMonthKey: projectedInvoiceMonthKey,
+          importSessionId: meta.sessionId,
+          importFileName: meta.fileName,
+          idempotencyKey: projectedId,
+          installmentGroupId,
+          installmentIndex: index,
+          installmentCount: installmentTotal,
+          installmentTotal: installmentTotal,
+          installmentsTotal: installmentTotal,
+          isProjected: true,
+        });
+
+        projectedCount += 1;
+      }
+    }
+
+    return {
+      rowId,
+      status,
+      preview: {
+        id: baseTransaction.id,
+        dateISO: candidate.dateISO,
+        description,
+        amountCents: candidate.amountCents,
+        kind,
+        categoryName,
+        invoiceMonthKey,
+        installmentLabel: canProject ? `${installmentIndex}/${installmentTotal}` : undefined,
+      },
+      transactions,
+      projectedCount,
+    };
+  };
+
   const buildImportOutcome = async (
     outcome: FileParseOutcome,
     sessionId: string,
@@ -385,176 +648,50 @@ const ImportTransactionsPage = () => {
       };
     }
 
-    const preparedTransactions: Transaction[] = [];
-    const preview: ImportPreviewTransaction[] = [];
-    let projectedCount = 0;
+    const baseMeta = {
+      fileName: outcome.fileName,
+      parserId: outcome.parserId,
+      paymentMethod,
+      cardId,
+      card,
+      sessionId,
+      uid,
+    };
 
-    for (const tx of outcome.result.transactions) {
-      const rawDescription = tx.description?.trim() || tx.name?.trim() || "";
-      const extraDescription = tx.extraDescription?.trim() || "";
-      const descriptionSeed = rawDescription || extraDescription;
-      const baseDescription = descriptionSeed || "Sem descricao";
-      const kind = tx.type;
+    const preparedValid = await Promise.all(
+      outcome.result.valid.map((candidate, index) =>
+        prepareCandidateRow(
+          candidate,
+          candidate.idempotencyKey ?? `${outcome.fileName}-valid-${index}`,
+          "valid",
+          baseMeta
+        )
+      )
+    );
 
-      const merchantKey = descriptionSeed ? buildMerchantKey(descriptionSeed) : "";
-      const merchantCategoryId = merchantKey
-        ? merchantRulesByKey.get(merchantKey)
-        : undefined;
-      const suggestion = categorizeTransaction(
-        rawDescription,
-        extraDescription,
-        tx.amountCents,
-        kind
-      );
-      const suggestedCategoryId =
-        merchantCategoryId ?? resolveCategoryId(suggestion.categoryKey, kind);
-      const categoryName = resolveCategoryName(suggestedCategoryId);
+    const optionalRows = [...outcome.result.warnings, ...outcome.result.ignored].filter(
+      (row): row is RowResult & { txCandidate: TransactionCandidate } =>
+        Boolean(row.txCandidate)
+    );
 
-      const installmentInfo =
-        paymentMethod === "card" ? parseInstallments(rawDescription) : null;
-      const installmentTotal =
-        installmentInfo && installmentInfo.installmentTotal > 1
-          ? installmentInfo.installmentTotal
-          : undefined;
-      const installmentIndex = installmentInfo?.installmentIndex;
-      const description =
-        installmentInfo?.baseDescription?.trim() || baseDescription;
+    const preparedOptional = await Promise.all(
+      optionalRows.map((row) =>
+        prepareCandidateRow(row.txCandidate, row.rowId, row.status, baseMeta)
+      )
+    );
 
-      const invoiceMonthKey =
-        paymentMethod === "card" && card
-          ? getInvoiceMonthKey(tx.dateISO, card.closingDay)
-          : undefined;
-      const monthKey = getMonthKeyFromDateISO(tx.dateISO);
-
-      const canProject =
-        paymentMethod === "card" &&
-        cardId &&
-        invoiceMonthKey &&
-        installmentTotal &&
-        installmentIndex &&
-        kind === "expense";
-
-      let installmentGroupId: string | undefined = undefined;
-      let resolvedId = tx.idempotencyKey ?? `imp-${sessionId}-${tx.rowIndex}`;
-
-      if (canProject) {
-        installmentGroupId = await buildInstallmentGroupId(
-          uid,
-          cardId,
-          description,
-          tx.amountCents,
-          installmentTotal
-        );
-        resolvedId = await buildInstallmentTxId(
-          uid,
-          outcome.parserId,
-          cardId,
-          installmentGroupId,
-          installmentIndex,
-          invoiceMonthKey
-        );
-      }
-
-      const baseTransaction: Transaction = {
-        id: resolvedId,
-        type: kind,
-        kind,
-        paymentMethod,
-        amountCents: tx.amountCents,
-        date: tx.dateISO,
-        monthKey,
-        invoiceMonthKey,
-        description,
-        name: tx.name,
-        documentNumber: tx.documentNumber,
-        categoryId: suggestedCategoryId,
-        cardId,
-        statementMonthKey: invoiceMonthKey,
-        importSessionId: sessionId,
-        importFileName: outcome.fileName,
-        idempotencyKey: tx.idempotencyKey ?? resolvedId,
-        installmentGroupId,
-        installmentIndex: canProject ? installmentIndex : undefined,
-        installmentCount: canProject ? installmentTotal : undefined,
-        installmentTotal: canProject ? installmentTotal : undefined,
-        installmentsTotal: canProject ? installmentTotal : undefined,
-        isProjected: canProject ? false : undefined,
-      };
-
-      preparedTransactions.push(baseTransaction);
-
-      const installmentLabel = canProject
-        ? `${installmentIndex}/${installmentTotal}`
-        : undefined;
-
-      preview.push({
-        id: baseTransaction.id,
-        dateISO: tx.dateISO,
-        description,
-        amountCents: tx.amountCents,
-        type: kind,
-        categoryName,
-        invoiceMonthKey,
-        installmentLabel,
-      });
-
-      if (
-        canProject &&
-        installmentTotal &&
-        installmentIndex < installmentTotal &&
-        installmentGroupId
-      ) {
-        for (let index = installmentIndex + 1; index <= installmentTotal; index += 1) {
-          const projectedInvoiceMonthKey = shiftMonthKey(
-            invoiceMonthKey,
-            index - installmentIndex
-          );
-          const projectedDate = `${projectedInvoiceMonthKey}-01`;
-          const projectedId = await buildInstallmentTxId(
-            uid,
-            outcome.parserId,
-            cardId,
-            installmentGroupId,
-            index,
-            projectedInvoiceMonthKey
-          );
-
-          preparedTransactions.push({
-            id: projectedId,
-            type: "expense",
-            kind: "expense",
-            paymentMethod: "card",
-            amountCents: tx.amountCents,
-            date: projectedDate,
-            monthKey: projectedInvoiceMonthKey,
-            invoiceMonthKey: projectedInvoiceMonthKey,
-            description: `${description} Parcela ${index}/${installmentTotal}`,
-            categoryId: suggestedCategoryId,
-            cardId,
-            statementMonthKey: projectedInvoiceMonthKey,
-            importSessionId: sessionId,
-            importFileName: outcome.fileName,
-            idempotencyKey: projectedId,
-            installmentGroupId,
-            installmentIndex: index,
-            installmentCount: installmentTotal,
-            installmentTotal: installmentTotal,
-            installmentsTotal: installmentTotal,
-            isProjected: true,
-          });
-
-          projectedCount += 1;
-        }
-      }
-    }
+    const projectedCount = preparedValid.reduce(
+      (sum, row) => sum + row.projectedCount,
+      0
+    );
 
     return {
       status: "success",
       fileName: outcome.fileName,
       parserId: outcome.parserId,
       result: outcome.result,
-      preview: preview.slice(0, 20),
-      preparedTransactions,
+      preparedValid,
+      preparedOptional,
       projectedCount,
     };
   };
@@ -600,6 +737,8 @@ const ImportTransactionsPage = () => {
         results.map((outcome) => buildImportOutcome(outcome, sessionId, effectiveUid))
       );
       setOutcomes(enriched);
+      setSelectedRowIdsByFile({});
+      setVisibleReviewRows({});
 
       if (import.meta.env.DEV) {
         console.log(
@@ -607,7 +746,7 @@ const ImportTransactionsPage = () => {
           enriched.map((outcome) => ({
             fileName: outcome.fileName,
             status: outcome.status,
-            count: outcome.status === "success" ? outcome.result.transactions.length : 0,
+            count: outcome.status === "success" ? outcome.result.counts.valid : 0,
             projected: outcome.status === "success" ? outcome.projectedCount : 0,
           }))
         );
@@ -649,11 +788,22 @@ const ImportTransactionsPage = () => {
     setImportMessage("");
 
     try {
-      const allTransactions = successfulOutcomes.flatMap(
-        (outcome) => outcome.preparedTransactions
+      const allTransactions = successfulOutcomes.flatMap((outcome) => {
+        const selectedIds = getSelectedRowIds(outcome.fileName);
+        const validTransactions = outcome.preparedValid.flatMap(
+          (row) => row.transactions
+        );
+        const selectedTransactions = outcome.preparedOptional
+          .filter((row) => selectedIds.has(row.rowId))
+          .flatMap((row) => row.transactions);
+        return [...validTransactions, ...selectedTransactions];
+      });
+
+      const uniqueTransactions = Array.from(
+        new Map(allTransactions.map((tx) => [tx.id, tx])).values()
       );
 
-      if (allTransactions.length === 0) {
+      if (uniqueTransactions.length === 0) {
         setFormError("Nenhuma transacao valida encontrada.");
         return;
       }
@@ -661,7 +811,7 @@ const ImportTransactionsPage = () => {
       const { written, batches } = await upsertTransactions(
         db,
         effectiveUid,
-        allTransactions
+        uniqueTransactions
       );
       setImportMessage(
         `Transacoes importadas: ${written}. Batches: ${batches}.`
@@ -683,6 +833,8 @@ const ImportTransactionsPage = () => {
     setFormError("");
     setImportMessage("");
     setSelectedCardId("");
+    setSelectedRowIdsByFile({});
+    setVisibleReviewRows({});
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -824,7 +976,25 @@ const ImportTransactionsPage = () => {
               </div>
             ) : (
               <div className="space-y-3">
-                {outcomes.map((outcome) => (
+                {outcomes.map((outcome) => {
+                  const selectedIds =
+                    outcome.status === "success"
+                      ? getSelectedRowIds(outcome.fileName)
+                      : new Set<string>();
+                  const selectedWarnings =
+                    outcome.status === "success"
+                      ? outcome.result.warnings.filter(
+                          (row) => row.txCandidate && selectedIds.has(row.rowId)
+                        ).length
+                      : 0;
+                  const selectedIgnored =
+                    outcome.status === "success"
+                      ? outcome.result.ignored.filter(
+                          (row) => row.txCandidate && selectedIds.has(row.rowId)
+                        ).length
+                      : 0;
+
+                  return (
                   <div
                     key={outcome.fileName}
                     className="rounded-lg border border-slate-200 bg-white px-4 py-3"
@@ -843,7 +1013,7 @@ const ImportTransactionsPage = () => {
                     </div>
                     <p className="mt-2 text-sm font-medium text-slate-800">
                       {outcome.status === "success"
-                        ? `${outcome.result.transactions.length} transacoes validas${
+                        ? `${outcome.result.counts.valid} transacoes validas${
                             outcome.projectedCount > 0
                               ? ` (+${outcome.projectedCount} projetadas)`
                               : ""
@@ -852,12 +1022,15 @@ const ImportTransactionsPage = () => {
                     </p>
                     {outcome.status === "success" ? (
                       <p className="mt-1 text-xs text-slate-500">
-                        Ignoradas: {outcome.result.skipped}. Avisos:{" "}
-                        {outcome.result.warnings.length}.
+                        Avisos: {outcome.result.counts.warnings} ({selectedWarnings}{" "}
+                        selecionados p/ importar). Ignoradas:{" "}
+                        {outcome.result.counts.ignored} ({selectedIgnored} selecionadas p/
+                        importar).
                       </p>
                     ) : null}
                   </div>
-                ))}
+                );
+                })}
               </div>
             )}
 
@@ -887,7 +1060,7 @@ const ImportTransactionsPage = () => {
                     {outcome.fileName}
                   </p>
                   <span className="text-xs text-slate-500">
-                    {outcome.result.transactions.length} transacoes
+                    {outcome.result.counts.valid} transacoes
                     {outcome.projectedCount > 0
                       ? ` (+${outcome.projectedCount} parcelas futuras)`
                       : ""}
@@ -904,25 +1077,203 @@ const ImportTransactionsPage = () => {
                       </tr>
                     </thead>
                     <tbody className="text-sm text-slate-700">
-                      {outcome.preview.map((tx) => (
-                        <tr key={`${outcome.fileName}-${tx.id}`}>
-                          <td className="py-2">{tx.dateISO}</td>
+                      {outcome.preparedValid.slice(0, 20).map((row) => (
+                        <tr key={`${outcome.fileName}-${row.preview.id}`}>
+                          <td className="py-2">{row.preview.dateISO}</td>
                           <td className="py-2">
-                            {tx.description || "-"}
-                            {tx.installmentLabel ? (
+                            {row.preview.description || "-"}
+                            {row.preview.installmentLabel ? (
                               <span className="ml-2 text-xs text-slate-400">
-                                Parcela {tx.installmentLabel}
+                                Parcela {row.preview.installmentLabel}
                               </span>
                             ) : null}
                           </td>
-                          <td className="py-2">{tx.categoryName}</td>
+                          <td className="py-2">{row.preview.categoryName}</td>
                           <td className="py-2 text-right">
-                            {formatAmountLabel(tx.type, tx.amountCents)}
+                            {formatAmountLabel(row.preview.kind, row.preview.amountCents)}
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                </div>
+
+                {(() => {
+                  const selectedIds = getSelectedRowIds(outcome.fileName);
+                  const selectedRows = outcome.preparedOptional.filter((row) =>
+                    selectedIds.has(row.rowId)
+                  );
+                  if (selectedRows.length === 0) {
+                    return null;
+                  }
+                  return (
+                    <div className="mt-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                        Selecionadas para importar
+                      </p>
+                      <div className="mt-2 overflow-x-auto">
+                        <table className="w-full text-left text-sm">
+                          <thead className="text-xs uppercase text-slate-400">
+                            <tr>
+                              <th className="py-2">Data</th>
+                              <th className="py-2">Descricao</th>
+                              <th className="py-2">Categoria</th>
+                              <th className="py-2 text-right">Valor</th>
+                            </tr>
+                          </thead>
+                          <tbody className="text-sm text-slate-700">
+                            {selectedRows.map((row) => (
+                              <tr key={`${outcome.fileName}-selected-${row.rowId}`}>
+                                <td className="py-2">{row.preview.dateISO}</td>
+                                <td className="py-2">
+                                  {row.preview.description || "-"}
+                                  {row.preview.installmentLabel ? (
+                                    <span className="ml-2 text-xs text-slate-400">
+                                      Parcela {row.preview.installmentLabel}
+                                    </span>
+                                  ) : null}
+                                </td>
+                                <td className="py-2">{row.preview.categoryName}</td>
+                                <td className="py-2 text-right">
+                                  {formatAmountLabel(
+                                    row.preview.kind,
+                                    row.preview.amountCents
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
+      {successfulOutcomes.length > 0 ? (
+        <Card className="mt-6">
+          <h2 className="text-lg font-semibold text-slate-900">
+            Avisos e Ignoradas (revisao)
+          </h2>
+          <p className="text-sm text-slate-500">
+            Revise linhas com avisos ou ignoradas e escolha o que deseja importar.
+          </p>
+
+          <div className="mt-4 space-y-4">
+            {successfulOutcomes.map((outcome) => (
+              <div
+                key={`${outcome.fileName}-review`}
+                className="rounded-lg border border-slate-200 bg-white px-4 py-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-slate-900">
+                    {outcome.fileName}
+                  </p>
+                  <span className="text-xs text-slate-500">
+                    Avisos: {outcome.result.counts.warnings} · Ignoradas:{" "}
+                    {outcome.result.counts.ignored}
+                  </span>
+                </div>
+
+                <div className="mt-3 space-y-3">
+                  {(["warnings", "ignored"] as const).map((bucket) => {
+                    const rows = outcome.result[bucket];
+                    const visibleCount = getVisibleCount(outcome.fileName, bucket);
+                    const displayRows = rows.slice(0, visibleCount);
+                    const selectedIds = getSelectedRowIds(outcome.fileName);
+                    const label = bucket === "warnings" ? "Avisos" : "Ignoradas";
+
+                    return (
+                      <details key={`${outcome.fileName}-${bucket}`} className="group">
+                        <summary className="cursor-pointer list-none text-sm font-semibold text-slate-700">
+                          {label} ({rows.length})
+                        </summary>
+                        <div className="mt-3">
+                          {rows.length === 0 ? (
+                            <p className="text-sm text-slate-500">
+                              Nenhuma linha nesta categoria.
+                            </p>
+                          ) : (
+                            <>
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-left text-sm">
+                                  <thead className="text-xs uppercase text-slate-400">
+                                    <tr>
+                                      <th className="py-2">Data</th>
+                                      <th className="py-2">Descricao</th>
+                                      <th className="py-2">Valor</th>
+                                      <th className="py-2">Motivo</th>
+                                      <th className="py-2 text-right">Acao</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="text-sm text-slate-700">
+                                    {displayRows.map((row) => {
+                                      const { date, description, amount } =
+                                        getRowDisplay(row);
+                                      const canInclude = Boolean(row.txCandidate);
+                                      const isSelected =
+                                        canInclude && selectedIds.has(row.rowId);
+
+                                      return (
+                                        <tr
+                                          key={`${outcome.fileName}-${bucket}-${row.rowId}`}
+                                        >
+                                          <td className="py-2">{date}</td>
+                                          <td className="py-2">{description}</td>
+                                          <td className="py-2">{amount}</td>
+                                          <td className="py-2 text-xs text-slate-500">
+                                            {row.reasonMessage}
+                                          </td>
+                                          <td className="py-2 text-right">
+                                            {canInclude ? (
+                                              <label className="inline-flex items-center gap-2 text-xs text-slate-600">
+                                                <input
+                                                  type="checkbox"
+                                                  checked={isSelected}
+                                                  onChange={(event) =>
+                                                    toggleRowSelection(
+                                                      outcome.fileName,
+                                                      row.rowId,
+                                                      event.target.checked
+                                                    )
+                                                  }
+                                                />
+                                                <span>Incluir na importacao</span>
+                                              </label>
+                                            ) : (
+                                              <span className="text-xs text-slate-400">
+                                                Nao importavel
+                                              </span>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+
+                              {rows.length > visibleCount ? (
+                                <div className="mt-3 flex">
+                                  <Button
+                                    type="button"
+                                    variant="secondary"
+                                    onClick={() => showMoreRows(outcome.fileName, bucket)}
+                                  >
+                                    Mostrar mais
+                                  </Button>
+                                </div>
+                              ) : null}
+                            </>
+                          )}
+                        </div>
+                      </details>
+                    );
+                  })}
                 </div>
               </div>
             ))}

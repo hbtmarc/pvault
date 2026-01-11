@@ -1,11 +1,11 @@
 import { normalizeText } from "./normalizeText";
 
-export type Direction = "income" | "expense";
+export type TransactionKind = "income" | "expense" | "transfer";
 
 export type CategorySeed = {
   id: string;
   name: string;
-  type: Direction;
+  type: "income" | "expense";
   order: number;
 };
 
@@ -34,7 +34,7 @@ type CategorizationRule = {
   id: string;
   categoryKey: string;
   keywords: string[];
-  kind?: Direction;
+  kind?: "income" | "expense";
   confidence: number;
 };
 
@@ -122,8 +122,12 @@ export const categorizeTransaction = (
   description: string | undefined,
   extra: string | undefined,
   _amountCents: number,
-  kind: Direction
+  kind: TransactionKind
 ): CategorizationResult => {
+  if (kind === "transfer") {
+    return { confidence: 0 };
+  }
+
   const text = normalizeText([description, extra].filter(Boolean).join(" "));
   if (!text) {
     return { confidence: 0 };

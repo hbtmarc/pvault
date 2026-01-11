@@ -29,6 +29,9 @@ import {
 import { formatCurrency } from "../lib/money";
 import { useAdmin } from "../providers/AdminProvider";
 
+const resolveTransactionKind = (transaction: Transaction) =>
+  transaction.kind ?? transaction.type;
+
 const StatementsPage = () => {
   const { authUid, effectiveUid, isImpersonating } = useAdmin();
   const { monthKey } = useMonthKey();
@@ -171,17 +174,28 @@ const StatementsPage = () => {
     [cards, selectedCardId]
   );
 
-  const statementTotal = useMemo(() => {
-    return transactions.reduce((sum, transaction) => {
-      if (transaction.type === "income") {
-        return sum - transaction.amountCents;
-      }
-      if (transaction.type === "expense") {
-        return sum + transaction.amountCents;
-      }
-      return sum;
-    }, 0);
-  }, [transactions]);
+  const displayTransactions = useMemo(
+    () =>
+      transactions.filter(
+        (transaction) => resolveTransactionKind(transaction) !== "transfer"
+      ),
+    [transactions]
+  );
+
+  const statementTotal = useMemo(
+    () =>
+      displayTransactions.reduce((sum, transaction) => {
+        const kind = resolveTransactionKind(transaction);
+        if (kind === "income") {
+          return sum - transaction.amountCents;
+        }
+        if (kind === "expense") {
+          return sum + transaction.amountCents;
+        }
+        return sum;
+      }, 0),
+    [displayTransactions]
+  );
 
   const isPaid = Boolean(statement);
   const canPay = canWrite && !isPaid && statementTotal > 0 && Boolean(selectedCard);
@@ -397,19 +411,20 @@ const StatementsPage = () => {
             <p className="mt-6 text-sm text-slate-500">Carregando itens...</p>
           ) : null}
 
-          {!loading && transactions.length === 0 ? (
+          {!loading && displayTransactions.length === 0 ? (
             <p className="mt-6 text-sm text-slate-500">
               Nenhum lancamento nesta fatura.
             </p>
           ) : null}
 
           <div className="mt-6 space-y-3">
-            {transactions.map((transaction) => {
+            {displayTransactions.map((transaction) => {
+              const kind = resolveTransactionKind(transaction);
               const categoryName =
                 categoriesById.get(transaction.categoryId ?? "")?.name ??
                 (transaction.categoryId ? "Categoria removida" : "Sem categoria");
               const badgeStyles =
-                transaction.type === "income"
+                kind === "income"
                   ? "bg-emerald-100 text-emerald-700"
                   : "bg-rose-100 text-rose-700";
               const hasInstallment =
@@ -432,7 +447,7 @@ const StatementsPage = () => {
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className={`rounded-full px-2 py-1 text-xs ${badgeStyles}`}>
-                        {transaction.type === "income" ? "Receita" : "Despesa"}
+                        {kind === "income" ? "Receita" : "Despesa"}
                       </span>
                       {hasInstallment ? (
                         <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">
@@ -461,7 +476,7 @@ const StatementsPage = () => {
 
           <SubtotalBar
             title="Subtotal da fatura"
-            itemsCount={transactions.length}
+            itemsCount={displayTransactions.length}
             totalCents={statementTotal}
           />
         </Card>
