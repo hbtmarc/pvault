@@ -4,7 +4,7 @@ import Button from "../components/Button";
 import Card from "../components/Card";
 import ErrorBanner from "../components/ErrorBanner";
 import Input from "../components/Input";
-import MonthToolbar, { formatMonthLabel } from "../components/month/MonthToolbar";
+import { formatMonthLabel } from "../components/month/MonthToolbar";
 import { useMonthKey } from "../hooks/useMonthKey";
 import {
   type Card as CardType,
@@ -262,15 +262,15 @@ const CardsPage = () => {
   };
 
   return (
-    <AppShell title="Cartoes" subtitle="Gerencie seus cartoes de credito">
-      <MonthToolbar
-        rightSlot={
-          <span className="text-sm text-slate-500">
-            Fatura do mes: <span className="font-medium text-slate-700">{monthLabel}</span>
-          </span>
-        }
-      />
-
+    <AppShell
+      title="Cartoes"
+      subtitle="Gerencie seus cartoes de credito"
+      toolbarSlot={
+        <span className="text-sm text-slate-500">
+          Fatura do mes: <span className="font-medium text-slate-700">{monthLabel}</span>
+        </span>
+      }
+    >
       <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
         <Card>
           <h2 className="text-lg font-semibold text-slate-900">Novo cartao</h2>

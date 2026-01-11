@@ -3,7 +3,6 @@ import AppShell from "../components/AppShell";
 import Button from "../components/Button";
 import Card from "../components/Card";
 import ErrorBanner from "../components/ErrorBanner";
-import MonthToolbar from "../components/month/MonthToolbar";
 import { useMonthKey } from "../hooks/useMonthKey";
 import {
   type Budget,
@@ -133,15 +132,15 @@ const BudgetPage = () => {
   };
 
   return (
-    <AppShell title="Orcamento" subtitle="Alocacao mensal por categoria">
-      <MonthToolbar
-        rightSlot={
-          <div className="text-sm text-slate-600">
-            Total alocado: {formatCurrency(totalAllocated)}
-          </div>
-        }
-      />
-
+    <AppShell
+      title="Orcamento"
+      subtitle="Alocacao mensal por categoria"
+      toolbarSlot={
+        <div className="text-sm text-slate-600">
+          Total alocado: {formatCurrency(totalAllocated)}
+        </div>
+      }
+    >
       <ErrorBanner info={error} className="mt-4" />
 
       <Card className="mt-6">

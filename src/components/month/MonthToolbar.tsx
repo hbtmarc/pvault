@@ -49,7 +49,7 @@ export const formatMonthLabel = (monthKey: string) => {
 };
 
 const MonthToolbar = ({ rightSlot, className }: MonthToolbarProps) => {
-  const { monthKey, setMonthKey } = useMonthKey();
+  const { monthKey, setMonthKey, goPrevMonth, goNextMonth } = useMonthKey();
   const { year } = parseMonthKey(monthKey);
   const monthText = getMonthText(monthKey);
   const todayKey = currentMonthKey();
@@ -71,11 +71,11 @@ const MonthToolbar = ({ rightSlot, className }: MonthToolbarProps) => {
           type="button"
           variant="secondary"
           className={controlIcon}
-          onClick={() => setMonthKey(addMonths(monthKey, -1))}
+          onClick={goPrevMonth}
           aria-label="Mes anterior"
           title="Mes anterior"
         >
-          ‹
+          {"<"}
         </Button>
         <div className={`${controlPill} cursor-default select-none`}>
           <span>{monthText}</span>
@@ -85,11 +85,11 @@ const MonthToolbar = ({ rightSlot, className }: MonthToolbarProps) => {
           type="button"
           variant="secondary"
           className={controlIcon}
-          onClick={() => setMonthKey(addMonths(monthKey, 1))}
+          onClick={goNextMonth}
           aria-label="Proximo mes"
           title="Proximo mes"
         >
-          ›
+          {">"}
         </Button>
         <Button
           type="button"

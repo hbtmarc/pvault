@@ -65,6 +65,7 @@ export class BbCsvParser implements IngestionParser {
         lancamento: launchTrimmed,
         detalhes: detailsTrimmed,
         valor: amountRaw.trim(),
+        tipo: typeRaw.trim(),
       };
 
       const description = detailsTrimmed || launchTrimmed;

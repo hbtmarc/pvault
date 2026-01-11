@@ -49,6 +49,7 @@ export type ImportCounts = {
 
 export type ImportResult = {
   valid: TransactionCandidate[];
+  validRows: RowResult[];
   warnings: RowResult[];
   ignored: RowResult[];
   counts: ImportCounts;

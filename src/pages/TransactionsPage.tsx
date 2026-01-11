@@ -3,7 +3,6 @@ import AppShell from "../components/AppShell";
 import Button from "../components/Button";
 import Card from "../components/Card";
 import ErrorBanner from "../components/ErrorBanner";
-import MonthToolbar from "../components/month/MonthToolbar";
 import SubtotalBar from "../components/SubtotalBar";
 import TransactionFormModal, {
   type TransactionDraft,
@@ -186,6 +185,28 @@ const TransactionsPage = () => {
       ),
     [plannedRecurring, plannedInstallments]
   );
+
+  const groupedTransactions = useMemo(() => {
+    const income: Transaction[] = [];
+    const expense: Transaction[] = [];
+    const transfer: Transaction[] = [];
+
+    transactions.forEach((transaction) => {
+      const kind = resolveTransactionKind(transaction);
+      if (kind === "income") {
+        income.push(transaction);
+      } else if (kind === "expense") {
+        expense.push(transaction);
+      } else {
+        transfer.push(transaction);
+      }
+    });
+
+    return { income, expense, transfer };
+  }, [transactions]);
+
+  const displayedCount =
+    groupedTransactions.income.length + groupedTransactions.expense.length;
 
   const subtotal = useMemo(
     () =>
@@ -393,16 +414,114 @@ const TransactionsPage = () => {
     }
   };
 
-  return (
-    <AppShell title="Lancamentos" subtitle="Gerencie entradas e saidas">
-      <MonthToolbar
-        rightSlot={
-          <Button onClick={openCreateModal} disabled={!canWrite}>
-            + Novo lancamento
-          </Button>
-        }
-      />
+  const renderTransactionRows = (items: Transaction[]) =>
+    items.map((transaction) => {
+      const kind = resolveTransactionKind(transaction);
+      const categoryName =
+        categoriesById.get(transaction.categoryId ?? "")?.name ??
+        (transaction.categoryId ? "Categoria removida" : "Sem categoria");
+      const cardInfo = transaction.cardId ? cardsById.get(transaction.cardId) : null;
+      const cardName = transaction.cardId ? cardInfo?.name ?? "Cartao removido" : "";
+      const isArchivedCard = Boolean(cardInfo?.archived);
+      const badgeStyles =
+        kind === "income"
+          ? "bg-emerald-100 text-emerald-700"
+          : kind === "expense"
+            ? "bg-rose-100 text-rose-700"
+            : "bg-slate-200 text-slate-700";
+      const typeLabel =
+        kind === "transfer" ? "Transferencia" : kind === "income" ? "Receita" : "Despesa";
+      const hasInstallment =
+        transaction.installmentGroupId ||
+        transaction.installmentPlanId ||
+        transaction.installmentIndex ||
+        transaction.installmentNumber;
+      const installmentIndex =
+        transaction.installmentIndex ?? transaction.installmentNumber ?? 1;
+      const installmentCount =
+        transaction.installmentCount ?? transaction.installmentsTotal ?? 1;
+      const canEditTransaction =
+        canWrite &&
+        !hasInstallment &&
+        kind !== "transfer" &&
+        !(transaction.paymentMethod === "card" && isArchivedCard);
+      const canDeleteTransaction = canWrite && kind !== "transfer";
+      const primaryDescription =
+        transaction.description?.trim() ||
+        (kind === "transfer" ? "Pagamento de fatura" : categoryName);
+      const invoiceLabel = transaction.invoiceMonthKey ?? transaction.statementMonthKey ?? "-";
 
+      return (
+        <div
+          key={transaction.id}
+          className="flex flex-col gap-3 rounded-xl border border-slate-100 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`rounded-full px-2 py-1 text-xs ${badgeStyles}`}>
+                {typeLabel}
+              </span>
+              {transaction.sourceType === "recurring" ? (
+                <span className="rounded-full bg-slate-200 px-2 py-1 text-xs text-slate-700">
+                  Recorrente
+                </span>
+              ) : null}
+              {hasInstallment ? (
+                <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">
+                  Parcela {installmentIndex}/{installmentCount}
+                </span>
+              ) : null}
+              {transaction.paidAt ? (
+                <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
+                  Pago
+                </span>
+              ) : null}
+              <span className="text-xs text-slate-500">{transaction.date}</span>
+            </div>
+            <p className="text-sm font-semibold text-slate-900">
+              {primaryDescription}
+            </p>
+            <p className="text-xs text-slate-500">{categoryName}</p>
+            {transaction.paymentMethod === "card" && transaction.cardId ? (
+              <p className="text-xs text-slate-500">
+                Cartao: {cardName} - Fatura {invoiceLabel}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-slate-900">
+              {formatCurrency(transaction.amountCents)}
+            </span>
+            <Button
+              variant="secondary"
+              onClick={() => openEditModal(transaction)}
+              disabled={!canEditTransaction}
+            >
+              Editar
+            </Button>
+            <Button
+              variant="secondary"
+              className="border-rose-200 text-rose-600 hover:border-rose-300"
+              onClick={() => handleDelete(transaction)}
+              disabled={!canDeleteTransaction}
+            >
+              Excluir
+            </Button>
+          </div>
+        </div>
+      );
+    });
+
+  return (
+    <AppShell
+      title="Lancamentos"
+      subtitle="Gerencie entradas e saidas"
+      toolbarSlot={
+        <Button onClick={openCreateModal} disabled={!canWrite}>
+          + Novo lancamento
+        </Button>
+      }
+    >
       <ErrorBanner info={error} className="mt-4" />
 
       <Card className="mt-6">
@@ -498,7 +617,7 @@ const TransactionsPage = () => {
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900">Lista do mes</h2>
           <span className="text-xs text-slate-500">
-            {transactions.length} lancamentos
+            {displayedCount} lancamentos
           </span>
         </div>
 
@@ -506,123 +625,52 @@ const TransactionsPage = () => {
           <p className="mt-4 text-sm text-slate-500">Carregando...</p>
         ) : null}
 
-        {!loading && transactions.length === 0 ? (
+        {!loading && displayedCount === 0 ? (
           <p className="mt-4 text-sm text-slate-500">
             Nenhum lancamento neste mes.
           </p>
         ) : null}
 
-        <div className="mt-4 space-y-3">
-          {transactions.map((transaction) => {
-            const kind = resolveTransactionKind(transaction);
-            const categoryName =
-              categoriesById.get(transaction.categoryId ?? "")?.name ??
-              (transaction.categoryId ? "Categoria removida" : "Sem categoria");
-            const cardInfo = transaction.cardId
-              ? cardsById.get(transaction.cardId)
-              : null;
-            const cardName = transaction.cardId
-              ? cardInfo?.name ?? "Cartao removido"
-              : "";
-            const isArchivedCard = Boolean(cardInfo?.archived);
-            const badgeStyles =
-              kind === "income"
-                ? "bg-emerald-100 text-emerald-700"
-                : kind === "expense"
-                  ? "bg-rose-100 text-rose-700"
-                  : "bg-slate-200 text-slate-700";
-            const typeLabel =
-              kind === "transfer"
-                ? "Transferencia"
-                : kind === "income"
-                  ? "Receita"
-                  : "Despesa";
-            const hasInstallment =
-              transaction.installmentGroupId ||
-              transaction.installmentPlanId ||
-              transaction.installmentIndex ||
-              transaction.installmentNumber;
-            const installmentIndex =
-              transaction.installmentIndex ?? transaction.installmentNumber ?? 1;
-            const installmentCount =
-              transaction.installmentCount ?? transaction.installmentsTotal ?? 1;
-            const canEditTransaction =
-              canWrite &&
-              !hasInstallment &&
-              kind !== "transfer" &&
-              !(transaction.paymentMethod === "card" && isArchivedCard);
-            const canDeleteTransaction = canWrite && kind !== "transfer";
-            const primaryDescription =
-              transaction.description?.trim() ||
-              (kind === "transfer" ? "Pagamento de fatura" : categoryName);
-            const invoiceLabel =
-              transaction.invoiceMonthKey ?? transaction.statementMonthKey ?? "-";
-
-            return (
-              <div
-                key={transaction.id}
-                className="flex flex-col gap-3 rounded-xl border border-slate-100 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div className="space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={`rounded-full px-2 py-1 text-xs ${badgeStyles}`}>
-                      {typeLabel}
-                    </span>
-                    {transaction.sourceType === "recurring" ? (
-                      <span className="rounded-full bg-slate-200 px-2 py-1 text-xs text-slate-700">
-                        Recorrente
-                      </span>
-                    ) : null}
-                    {hasInstallment ? (
-                      <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">
-                        Parcela {installmentIndex}/{installmentCount}
-                      </span>
-                    ) : null}
-                    {transaction.paidAt ? (
-                      <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
-                        Pago
-                      </span>
-                    ) : null}
-                    <span className="text-xs text-slate-500">{transaction.date}</span>
-                  </div>
-                  <p className="text-sm font-semibold text-slate-900">
-                    {primaryDescription}
-                  </p>
-                  <p className="text-xs text-slate-500">{categoryName}</p>
-                  {transaction.paymentMethod === "card" && transaction.cardId ? (
-                    <p className="text-xs text-slate-500">
-                      Cartao: {cardName} - Fatura {invoiceLabel}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-semibold text-slate-900">
-                    {formatCurrency(transaction.amountCents)}
-                  </span>
-                  <Button
-                    variant="secondary"
-                    onClick={() => openEditModal(transaction)}
-                    disabled={!canEditTransaction}
-                  >
-                    Editar
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    className="border-rose-200 text-rose-600 hover:border-rose-300"
-                    onClick={() => handleDelete(transaction)}
-                    disabled={!canDeleteTransaction}
-                  >
-                    Excluir
-                  </Button>
-                </div>
+        <div className="mt-4 space-y-6">
+          <div className="space-y-3">
+            <h3 className="text-sm font-semibold text-emerald-700">Receitas</h3>
+            {!loading && groupedTransactions.income.length === 0 ? (
+              <p className="text-sm text-slate-500">Nenhuma receita neste mes.</p>
+            ) : null}
+            {groupedTransactions.income.length > 0 ? (
+              <div className="space-y-3">
+                {renderTransactionRows(groupedTransactions.income)}
               </div>
-            );
-          })}
+            ) : null}
+          </div>
+
+          <div className="space-y-3">
+            <h3 className="text-sm font-semibold text-rose-700">Despesas</h3>
+            {!loading && groupedTransactions.expense.length === 0 ? (
+              <p className="text-sm text-slate-500">Nenhuma despesa neste mes.</p>
+            ) : null}
+            {groupedTransactions.expense.length > 0 ? (
+              <div className="space-y-3">
+                {renderTransactionRows(groupedTransactions.expense)}
+              </div>
+            ) : null}
+          </div>
+
+          {groupedTransactions.transfer.length > 0 ? (
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold text-slate-600">
+                Transferencias
+              </h3>
+              <div className="space-y-3">
+                {renderTransactionRows(groupedTransactions.transfer)}
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <SubtotalBar
           title="Subtotal do mes (itens exibidos)"
-          itemsCount={transactions.length}
+          itemsCount={displayedCount}
           incomeCents={subtotal.income}
           expenseCents={subtotal.expense}
         />

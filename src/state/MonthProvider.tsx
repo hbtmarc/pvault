@@ -1,99 +1,72 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+} from "react";
 import { useSearchParams } from "react-router-dom";
+import { getMonthKey, isValidMonthKey, shiftMonthKey } from "../lib/date";
+import { setMonthInSearchParams } from "./monthUrl";
 
 type MonthContextValue = {
-  monthKey: string;               // "YYYY-MM"
+  monthKey: string; // "YYYY-MM"
   setMonthKey: (next: string) => void;
+  goPrevMonth: () => void;
+  goNextMonth: () => void;
 };
 
 const MonthContext = createContext<MonthContextValue | null>(null);
 
-const STORAGE_KEY = "vf_monthKey";
+const resolveCurrentMonthKey = () => getMonthKey(new Date());
 
-function isValidMonthKey(v: string | null | undefined): v is string {
-  return !!v && /^\d{4}-(0[1-9]|1[0-2])$/.test(v);
-}
-
-function currentMonthKey(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  return `${y}-${m}`;
-}
-
-function readStoredMonth(): string | null {
-  try {
-    const v = localStorage.getItem(STORAGE_KEY);
-    return isValidMonthKey(v) ? v : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeStoredMonth(v: string) {
-  try {
-    localStorage.setItem(STORAGE_KEY, v);
-  } catch {
-    // ignore
-  }
-}
+const isValidMonth = (value: string | null | undefined): value is string =>
+  isValidMonthKey(value);
 
 export function MonthProvider({ children }: { children: React.ReactNode }) {
   const [searchParams, setSearchParams] = useSearchParams();
-
-  // Derivados estáveis para evitar dependência por identidade do URLSearchParams
   const searchStr = searchParams.toString();
   const urlM = searchParams.get("m");
+  const fallbackMonth = useMemo(() => resolveCurrentMonthKey(), []);
 
-  // fallbackMonth é o que usamos quando a URL não tiver m (ou for inválido)
-  const [fallbackMonth, setFallbackMonth] = useState<string>(() => {
-    return readStoredMonth() ?? currentMonthKey();
-  });
+  const monthKey = useMemo(
+    () => (isValidMonth(urlM) ? urlM : fallbackMonth),
+    [urlM, fallbackMonth]
+  );
 
-  // Fonte única: se URL tem m válido, vale ele; senão, usa fallbackMonth.
-  const monthKey = useMemo(() => {
-    return isValidMonthKey(urlM) ? urlM : fallbackMonth;
-  }, [urlM, fallbackMonth]);
-
-  // Garantia: se a URL estiver sem m (ou inválida), escrevemos UMA vez (replace) o monthKey resolvido.
-  // Isso é one-way (URL inválida -> URL corrigida). Não existe state->URL via effect competindo.
   useEffect(() => {
-    if (isValidMonthKey(urlM)) return;
+    if (isValidMonth(urlM)) {
+      return;
+    }
 
     const next = new URLSearchParams(searchStr);
-    next.set("m", monthKey);
-
-    const nextStr = next.toString();
-    if (nextStr === searchStr) return;
-
-    setSearchParams(next, { replace: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setMonthInSearchParams(next, setSearchParams, monthKey);
   }, [urlM, monthKey, searchStr, setSearchParams]);
 
-  const setMonthKey = (next: string) => {
-    if (!isValidMonthKey(next)) return;
+  const setMonthKey = useCallback(
+    (next: string) => {
+      if (!isValidMonthKey(next)) {
+        return;
+      }
+      setMonthInSearchParams(searchParams, setSearchParams, next);
+    },
+    [searchParams, setSearchParams]
+  );
 
-    // persistimos o fallback para o caso do usuário abrir a app sem query param no futuro
-    setFallbackMonth(next);
-    writeStoredMonth(next);
+  const goPrevMonth = useCallback(
+    () => setMonthKey(shiftMonthKey(monthKey, -1)),
+    [monthKey, setMonthKey]
+  );
 
-    // Se já está igual na URL, não navega (isso é crítico para não entrar em loop)
-    if (searchParams.get("m") === next) return;
+  const goNextMonth = useCallback(
+    () => setMonthKey(shiftMonthKey(monthKey, 1)),
+    [monthKey, setMonthKey]
+  );
 
-    // Atualiza preservando outros params — SEM mutar prev
-    setSearchParams((prev) => {
-      const prevStr = prev.toString();
-      const sp = new URLSearchParams(prev);
-      sp.set("m", next);
-
-      // Se a serialização não mudou, devolve prev (sem navegação)
-      if (sp.toString() === prevStr) return prev;
-
-      return sp;
-    }, { replace: true });
-  };
-
-  const value = useMemo<MonthContextValue>(() => ({ monthKey, setMonthKey }), [monthKey]);
+  const value = useMemo<MonthContextValue>(
+    () => ({ monthKey, setMonthKey, goPrevMonth, goNextMonth }),
+    [monthKey, setMonthKey, goPrevMonth, goNextMonth]
+  );
 
   return <MonthContext.Provider value={value}>{children}</MonthContext.Provider>;
 }

@@ -3,7 +3,6 @@ import AppShell from "../components/AppShell";
 import Button from "../components/Button";
 import Card from "../components/Card";
 import ErrorBanner from "../components/ErrorBanner";
-import MonthToolbar from "../components/month/MonthToolbar";
 import { getMonthKey } from "../lib/date";
 import { useMonthKey } from "../hooks/useMonthKey";
 import {
@@ -461,8 +460,6 @@ const RecurringPage = () => {
             Preview do mes selecionado, sem gravar no Firestore.
           </p>
         </div>
-        <MonthToolbar className="mt-4 mb-4" />
-
         {plannedItems.length === 0 ? (
           <p className="mt-4 text-sm text-slate-500">Nenhum previsto para este mes.</p>
         ) : null}

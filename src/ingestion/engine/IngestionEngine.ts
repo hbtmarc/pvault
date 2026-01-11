@@ -61,6 +61,7 @@ const buildImportResult = (rows: RowResult[]): ImportResult => {
 
   return {
     valid,
+    validRows,
     warnings,
     ignored,
     counts: {

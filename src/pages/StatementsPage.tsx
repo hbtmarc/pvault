@@ -3,7 +3,6 @@ import AppShell from "../components/AppShell";
 import Button from "../components/Button";
 import Card from "../components/Card";
 import ErrorBanner from "../components/ErrorBanner";
-import MonthToolbar from "../components/month/MonthToolbar";
 import SubtotalBar from "../components/SubtotalBar";
 import { getDueDateISO, shiftMonthKey } from "../lib/date";
 import { useMonthKey } from "../hooks/useMonthKey";
@@ -295,30 +294,30 @@ const StatementsPage = () => {
   };
 
   return (
-    <AppShell title="Faturas" subtitle="Acompanhe seus ciclos de cartao">
-      <MonthToolbar
-        rightSlot={
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="font-medium text-slate-700">Cartao</span>
-            <select
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              value={selectedCardId}
-              onChange={(event) => setSelectedCardId(event.target.value)}
-              disabled={cards.length === 0}
-            >
-              {cards.length === 0 ? (
-                <option value="">Nenhum cartao cadastrado</option>
-              ) : null}
-              {cards.map((card) => (
-                <option key={card.id} value={card.id}>
-                  {card.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        }
-      />
-
+    <AppShell
+      title="Faturas"
+      subtitle="Acompanhe seus ciclos de cartao"
+      toolbarSlot={
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="font-medium text-slate-700">Cartao</span>
+          <select
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            value={selectedCardId}
+            onChange={(event) => setSelectedCardId(event.target.value)}
+            disabled={cards.length === 0}
+          >
+            {cards.length === 0 ? (
+              <option value="">Nenhum cartao cadastrado</option>
+            ) : null}
+            {cards.map((card) => (
+              <option key={card.id} value={card.id}>
+                {card.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      }
+    >
       <ErrorBanner info={error} className="mt-4" />
 
       {!selectedCard ? (
