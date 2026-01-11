@@ -16,6 +16,7 @@ import {
   getFirestoreErrorMessage,
   listCardTransactionsByStatementMonth,
   listCards,
+  listOpenCardTransactions,
   updateCard,
 } from "../lib/firestore";
 import { formatCentsToInput, formatCurrency, parseBRLToCents } from "../lib/money";
@@ -31,6 +32,9 @@ const CardsPage = () => {
   const [cards, setCards] = useState<CardType[]>([]);
   const [archivedCards, setArchivedCards] = useState<CardType[]>([]);
   const [statementTransactions, setStatementTransactions] = useState<Transaction[]>(
+    []
+  );
+  const [openCardTransactions, setOpenCardTransactions] = useState<Transaction[]>(
     []
   );
   const [loading, setLoading] = useState(true);
@@ -99,6 +103,20 @@ const CardsPage = () => {
     return () => unsubscribe();
   }, [effectiveUid, monthKey]);
 
+  useEffect(() => {
+    if (!effectiveUid) {
+      return undefined;
+    }
+
+    const unsubscribe = listOpenCardTransactions(
+      effectiveUid,
+      (items) => setOpenCardTransactions(items),
+      (err) => setError(getFirestoreErrorInfo(err))
+    );
+
+    return () => unsubscribe();
+  }, [effectiveUid]);
+
   const statementTotals = useMemo(() => {
     const totals = new Map<string, number>();
     statementTransactions.forEach((transaction) => {
@@ -118,6 +136,38 @@ const CardsPage = () => {
     });
     return totals;
   }, [statementTransactions]);
+
+  const openUsageByCard = useMemo(() => {
+    const totals = new Map<string, { expense: number; income: number }>();
+    openCardTransactions.forEach((transaction) => {
+      if (!transaction.cardId) {
+        return;
+      }
+      if (transaction.paidAt || transaction.settledAt) {
+        return;
+      }
+      const effectiveMonthKey =
+        transaction.invoiceMonthKey ??
+        transaction.statementMonthKey ??
+        transaction.monthKey;
+      if (effectiveMonthKey && effectiveMonthKey < monthKey) {
+        return;
+      }
+      const kind = resolveTransactionKind(transaction);
+      if (kind === "transfer") {
+        return;
+      }
+      const amount = Math.abs(transaction.amountCents);
+      const current = totals.get(transaction.cardId) ?? { expense: 0, income: 0 };
+      if (kind === "income") {
+        current.income += amount;
+      } else if (kind === "expense") {
+        current.expense += amount;
+      }
+      totals.set(transaction.cardId, current);
+    });
+    return totals;
+  }, [openCardTransactions, monthKey]);
 
   const validateDays = (closing: number, due: number) => {
     if (!Number.isInteger(closing) || closing < 1 || closing > 31) {
@@ -271,7 +321,7 @@ const CardsPage = () => {
         </span>
       }
     >
-      <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
         <Card>
           <h2 className="text-lg font-semibold text-slate-900">Novo cartao</h2>
           <p className="text-sm text-slate-500">
@@ -356,14 +406,15 @@ const CardsPage = () => {
             {cards.map((card) => {
               const statementTotal = statementTotals.get(card.id) ?? 0;
               const limitCents = card.limitCents;
-              const available =
-                limitCents !== undefined ? limitCents - statementTotal : null;
+              const openUsage = openUsageByCard.get(card.id) ?? {
+                expense: 0,
+                income: 0,
+              };
+              const usedOpen = Math.max(0, openUsage.expense - openUsage.income);
+              const available = limitCents !== undefined ? limitCents - usedOpen : null;
               const usagePercent =
                 limitCents && limitCents > 0
-                  ? Math.max(
-                      0,
-                      Math.min(100, Math.round((statementTotal / limitCents) * 100))
-                    )
+                  ? Math.max(0, Math.round((usedOpen / limitCents) * 100))
                   : 0;
 
               return (
@@ -438,28 +489,67 @@ const CardsPage = () => {
                       </div>
                     </div>
                   ) : (
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-900">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0 flex-1 space-y-2">
+                        <p
+                          className="text-sm font-semibold text-slate-900 truncate"
+                          title={card.name}
+                        >
                           {card.name}
                         </p>
-                        <p className="text-xs text-slate-500">
-                          Fecha dia {card.closingDay} - Vence dia {card.dueDay}
-                        </p>
-                        {limitCents !== undefined ? (
-                          <p className="text-xs text-slate-500">
-                            Limite: {formatCurrency(limitCents)}
-                          </p>
-                        ) : null}
-                        <p className="text-xs text-slate-500">
-                          Total fatura {monthKey}: {formatCurrency(statementTotal)}
-                        </p>
-                        {limitCents !== undefined ? (
-                          <p className="text-xs text-slate-500">
-                            Disponivel: {formatCurrency(available ?? 0)} - Uso:{" "}
-                            {usagePercent}%
-                          </p>
-                        ) : null}
+                        <div className="space-y-1 text-xs text-slate-500">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="min-w-0 flex-1 truncate whitespace-nowrap">
+                              Ciclo
+                            </span>
+                            <span
+                              className="shrink-0 whitespace-nowrap text-right"
+                              title={`Fecha dia ${card.closingDay} - Vence dia ${card.dueDay}`}
+                            >
+                              Fecha dia {card.closingDay} - Vence dia {card.dueDay}
+                            </span>
+                          </div>
+                          {limitCents !== undefined ? (
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="min-w-0 flex-1 truncate whitespace-nowrap">
+                                Limite
+                              </span>
+                              <span
+                                className="shrink-0 whitespace-nowrap text-right"
+                                title={formatCurrency(limitCents)}
+                              >
+                                {formatCurrency(limitCents)}
+                              </span>
+                            </div>
+                          ) : null}
+                          <div className="flex items-center justify-between gap-3">
+                            <span
+                              className="min-w-0 flex-1 truncate whitespace-nowrap"
+                              title={`Total fatura ${monthKey}`}
+                            >
+                              Total fatura {monthKey}
+                            </span>
+                            <span
+                              className="shrink-0 whitespace-nowrap text-right"
+                              title={formatCurrency(statementTotal)}
+                            >
+                              {formatCurrency(statementTotal)}
+                            </span>
+                          </div>
+                          {limitCents !== undefined ? (
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="min-w-0 flex-1 truncate whitespace-nowrap">
+                                Disponivel
+                              </span>
+                              <span
+                                className="shrink-0 whitespace-nowrap text-right"
+                                title={`${formatCurrency(available ?? 0)} - Uso: ${usagePercent}%`}
+                              >
+                                {formatCurrency(available ?? 0)} - Uso: {usagePercent}%
+                              </span>
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <Button
@@ -504,7 +594,7 @@ const CardsPage = () => {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-sm font-semibold text-slate-900">{card.name}</p>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-slate-500 whitespace-nowrap">
                     Fecha dia {card.closingDay} - Vence dia {card.dueDay}
                   </p>
                 </div>

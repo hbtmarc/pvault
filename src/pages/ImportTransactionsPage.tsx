@@ -904,6 +904,7 @@ const ImportTransactionsPage = () => {
       installmentTotal: canProject ? installmentTotal : undefined,
       installmentsTotal: canProject ? installmentTotal : undefined,
       isProjected: canProject ? false : undefined,
+      settledAt: meta.paymentMethod === "card" ? null : undefined,
     };
 
     const transactions: Transaction[] = [baseTransaction];
@@ -952,6 +953,7 @@ const ImportTransactionsPage = () => {
           installmentTotal: installmentTotal,
           installmentsTotal: installmentTotal,
           isProjected: true,
+          settledAt: null,
         });
 
         projectedCount += 1;

@@ -88,6 +88,7 @@ export type Transaction = {
   installmentsTotal?: number;
   paidAt?: string;
   paidByStatementId?: string;
+  settledAt?: Timestamp | null;
   isProjected?: boolean;
   sourceType?: TransactionSourceType;
   sourceRuleId?: string;
@@ -252,6 +253,7 @@ type TransactionInput = {
   installmentsTotal?: number;
   paidAt?: string;
   paidByStatementId?: string;
+  settledAt?: Timestamp | null;
   isProjected?: boolean;
   sourceType?: TransactionSourceType;
   sourceRuleId?: string;
@@ -367,6 +369,7 @@ const mapTransactionSnapshot = (
     installmentsTotal: (data.installmentsTotal as number) ?? undefined,
     paidAt: (data.paidAt as string) ?? undefined,
     paidByStatementId: (data.paidByStatementId as string) ?? undefined,
+    settledAt: (data.settledAt as Timestamp) ?? null,
     isProjected: (data.isProjected as boolean) ?? undefined,
     sourceType: data.sourceType as TransactionSourceType | undefined,
     sourceRuleId: (data.sourceRuleId as string) ?? undefined,
@@ -745,6 +748,12 @@ export const createTransaction = async (uid: string, data: TransactionInput) => 
     payload.kind = resolvedKind;
   }
 
+  if (data.settledAt !== undefined) {
+    payload.settledAt = data.settledAt;
+  } else if (data.paymentMethod === "card") {
+    payload.settledAt = null;
+  }
+
   if (data.name) {
     payload.name = data.name.trim();
   }
@@ -893,6 +902,9 @@ export const updateTransaction = async (
     payload.paidByStatementId = data.paidByStatementId
       ? data.paidByStatementId
       : deleteField();
+  }
+  if (data.settledAt !== undefined) {
+    payload.settledAt = data.settledAt;
   }
   if (data.installmentPlanId) {
     payload.installmentPlanId = data.installmentPlanId;
@@ -1103,6 +1115,33 @@ export const listCardTransactionsByStatementMonth = (
   };
 };
 
+export const listOpenCardTransactions = (
+  uid: string,
+  onChange: (items: Transaction[]) => void,
+  onError?: (error: unknown) => void
+) => {
+  ensureUid(uid);
+  const path = `users/${uid}/transactions`;
+
+  logDev("[firestore] listOpenCardTransactions", { uid, path });
+
+  const openQuery = query(
+    transactionsCollection(uid),
+    where("paymentMethod", "==", "card")
+  );
+
+  return onSnapshot(
+    openQuery,
+    (snapshot) => {
+      onChange(snapshot.docs.map(mapTransactionSnapshot));
+    },
+    (error) => {
+      console.error("[firestore] listOpenCardTransactions", { uid, path, error });
+      onError?.(error);
+    }
+  );
+};
+
 const fetchStatementTransactionDocs = async (
   uid: string,
   cardId: string,
@@ -1238,6 +1277,23 @@ export const markStatementItemsPaid = async (
   ensureUid(uid);
   const path = `users/${uid}/transactions`;
   const docs = await fetchStatementTransactionDocs(uid, cardId, statementMonthKey);
+  const isBillableKind = (data: DocumentData) => {
+    const rawType =
+      (data.type as TransactionType) ?? (data.direction as Direction) ?? "expense";
+    const rawKind =
+      (data.kind as TransactionKind) ??
+      (rawType === "income" || rawType === "expense" || rawType === "transfer"
+        ? rawType
+        : undefined);
+    return rawKind === "income" || rawKind === "expense";
+  };
+  const docsToUpdate = docs.filter((item) => {
+    const data = item.data();
+    if (!isBillableKind(data)) {
+      return false;
+    }
+    return !data.settledAt;
+  });
   const chunkSize = 300;
 
   logDev("[firestore] markStatementItemsPaid", {
@@ -1245,23 +1301,24 @@ export const markStatementItemsPaid = async (
     path,
     cardId,
     statementMonthKey,
-    total: docs.length,
+    total: docsToUpdate.length,
   });
 
-  for (let start = 0; start < docs.length; start += chunkSize) {
+  for (let start = 0; start < docsToUpdate.length; start += chunkSize) {
     const batch = writeBatch(db);
-    const slice = docs.slice(start, start + chunkSize);
+    const slice = docsToUpdate.slice(start, start + chunkSize);
     slice.forEach((item) => {
       batch.update(item.ref, {
         paidAt,
         paidByStatementId: statementId,
+        settledAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
     });
     await batch.commit();
   }
 
-  return docs.length;
+  return docsToUpdate.length;
 };
 
 export const clearStatementItemsPaid = async (
@@ -1272,6 +1329,17 @@ export const clearStatementItemsPaid = async (
   ensureUid(uid);
   const path = `users/${uid}/transactions`;
   const docs = await fetchStatementTransactionDocs(uid, cardId, statementMonthKey);
+  const isBillableKind = (data: DocumentData) => {
+    const rawType =
+      (data.type as TransactionType) ?? (data.direction as Direction) ?? "expense";
+    const rawKind =
+      (data.kind as TransactionKind) ??
+      (rawType === "income" || rawType === "expense" || rawType === "transfer"
+        ? rawType
+        : undefined);
+    return rawKind === "income" || rawKind === "expense";
+  };
+  const docsToUpdate = docs.filter((item) => isBillableKind(item.data()));
   const chunkSize = 300;
 
   logDev("[firestore] clearStatementItemsPaid", {
@@ -1279,23 +1347,24 @@ export const clearStatementItemsPaid = async (
     path,
     cardId,
     statementMonthKey,
-    total: docs.length,
+    total: docsToUpdate.length,
   });
 
-  for (let start = 0; start < docs.length; start += chunkSize) {
+  for (let start = 0; start < docsToUpdate.length; start += chunkSize) {
     const batch = writeBatch(db);
-    const slice = docs.slice(start, start + chunkSize);
+    const slice = docsToUpdate.slice(start, start + chunkSize);
     slice.forEach((item) => {
       batch.update(item.ref, {
         paidAt: deleteField(),
         paidByStatementId: deleteField(),
+        settledAt: deleteField(),
         updatedAt: serverTimestamp(),
       });
     });
     await batch.commit();
   }
 
-  return docs.length;
+  return docsToUpdate.length;
 };
 
 export const createInstallmentPlan = async (
