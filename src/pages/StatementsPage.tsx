@@ -421,6 +421,8 @@ const StatementsPage = () => {
                 transaction.installmentIndex ?? transaction.installmentNumber ?? 1;
               const installmentCount =
                 transaction.installmentCount ?? transaction.installmentsTotal ?? 1;
+              const primaryDescription =
+                transaction.description?.trim() || "Sem descricao";
 
               return (
                 <div
@@ -442,21 +444,17 @@ const StatementsPage = () => {
                           Pago
                         </span>
                       ) : null}
-                      <span className="text-xs text-slate-500">{transaction.date}</span>
-                    </div>
-                    <p className="text-sm font-semibold text-slate-900">
-                      {categoryName}
-                    </p>
-                    {transaction.description ? (
-                      <p className="text-xs text-slate-500">
-                        {transaction.description}
-                      </p>
-                    ) : null}
+                    <span className="text-xs text-slate-500">{transaction.date}</span>
                   </div>
-                  <span className="text-sm font-semibold text-slate-900">
-                    {formatCurrency(transaction.amountCents)}
-                  </span>
+                  <p className="text-sm font-semibold text-slate-900">
+                    {primaryDescription}
+                  </p>
+                  <p className="text-xs text-slate-500">{categoryName}</p>
                 </div>
+                <span className="text-sm font-semibold text-slate-900">
+                  {formatCurrency(transaction.amountCents)}
+                </span>
+              </div>
               );
             })}
           </div>

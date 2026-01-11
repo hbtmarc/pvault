@@ -69,6 +69,9 @@ export const getStatementMonthKey = (dateISO: string, closingDay: number) => {
   return getMonthKey(nextMonth);
 };
 
+export const getInvoiceMonthKey = (dateISO: string, closingDay: number) =>
+  getStatementMonthKey(dateISO, closingDay);
+
 export const getDueDateISO = (statementMonthKey: string, dueDay: number) => {
   const [year, month] = statementMonthKey.split("-").map(Number);
   const dueMonth = new Date(year, month, 1);

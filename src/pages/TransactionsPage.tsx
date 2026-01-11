@@ -29,9 +29,11 @@ import {
   listRecurringRules,
   listTransactionsByMonth,
   removeTransaction,
+  upsertMerchantCategoryRule,
   updateTransaction,
 } from "../lib/firestore";
 import { formatCurrency } from "../lib/money";
+import { buildMerchantKey } from "../lib/merchantRules";
 import { useAdmin } from "../providers/AdminProvider";
 
 const TransactionsPage = () => {
@@ -258,6 +260,25 @@ const TransactionsPage = () => {
           sourceRuleId: editing.sourceRuleId,
           plannedDate: editing.plannedDate,
         });
+
+        const nextCategoryId = values.categoryId ?? "";
+        const previousCategoryId = editing.categoryId ?? "";
+        const descriptionForRule =
+          values.description?.trim() || editing.description?.trim() || "";
+        if (
+          nextCategoryId &&
+          nextCategoryId !== previousCategoryId &&
+          descriptionForRule
+        ) {
+          const merchantKey = buildMerchantKey(descriptionForRule);
+          if (merchantKey) {
+            await upsertMerchantCategoryRule(
+              authUid,
+              merchantKey,
+              nextCategoryId
+            );
+          }
+        }
       } else {
         if (
           values.paymentMethod === "card" &&
@@ -526,6 +547,11 @@ const TransactionsPage = () => {
               transaction.type !== "transfer" &&
               !(transaction.paymentMethod === "card" && isArchivedCard);
             const canDeleteTransaction = canWrite && transaction.type !== "transfer";
+            const primaryDescription =
+              transaction.description?.trim() ||
+              (transaction.type === "transfer" ? "Pagamento de fatura" : categoryName);
+            const invoiceLabel =
+              transaction.invoiceMonthKey ?? transaction.statementMonthKey ?? "-";
 
             return (
               <div
@@ -555,18 +581,12 @@ const TransactionsPage = () => {
                     <span className="text-xs text-slate-500">{transaction.date}</span>
                   </div>
                   <p className="text-sm font-semibold text-slate-900">
-                    {transaction.type === "transfer"
-                      ? transaction.description || "Pagamento de fatura"
-                      : categoryName}
+                    {primaryDescription}
                   </p>
+                  <p className="text-xs text-slate-500">{categoryName}</p>
                   {transaction.paymentMethod === "card" && transaction.cardId ? (
                     <p className="text-xs text-slate-500">
-                      Cartao: {cardName} - Fatura {transaction.statementMonthKey ?? "-"}
-                    </p>
-                  ) : null}
-                  {transaction.description ? (
-                    <p className="text-xs text-slate-500">
-                      {transaction.description}
+                      Cartao: {cardName} - Fatura {invoiceLabel}
                     </p>
                   ) : null}
                 </div>

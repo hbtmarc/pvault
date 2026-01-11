@@ -3,6 +3,7 @@ export type NormalizedTransaction = {
   amountCents: number;
   type: "income" | "expense";
   description?: string;
+  extraDescription?: string;
   name?: string;
   documentNumber?: string;
   rowIndex: number;

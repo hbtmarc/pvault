@@ -3,6 +3,7 @@ import { parseMoneyToCents } from "../../core/parseMoney";
 import { normalizeHeader } from "../../core/normalizeHeader";
 import { addError, addWarning, createParseResult, incrementSkipped } from "../../core/result";
 import type { IngestionContext, IngestionParser, ParseResult } from "../../core/types";
+import { normalizeText } from "../../../lib/normalizeText";
 
 const hasField = (header: string[], keys: string[]) =>
   keys.some((key) => header.includes(key));
@@ -36,13 +37,13 @@ export class BbCsvParser implements IngestionParser {
       "detalhes",
       "descricao",
       "historico",
-      "lancamento",
       "title",
     ]);
+    const launchIndex = findIndex(normalizedHeader, ["lancamento"]);
     const documentIndex = findIndex(normalizedHeader, ["ndocumento", "documento"]);
     const typeIndex = findIndex(normalizedHeader, ["tipolancamento", "tipo"]);
 
-    if (dateIndex < 0 || amountIndex < 0 || detailsIndex < 0) {
+    if (dateIndex < 0 || amountIndex < 0 || (detailsIndex < 0 && launchIndex < 0)) {
       addError(result, "Colunas obrigatorias ausentes.");
       return result;
     }
@@ -51,9 +52,29 @@ export class BbCsvParser implements IngestionParser {
       const rowIndex = index + 1;
       const dateRaw = row[dateIndex] ?? "";
       const amountRaw = row[amountIndex] ?? "";
-      const detailsRaw = row[detailsIndex] ?? "";
+      const detailsRaw = detailsIndex >= 0 ? row[detailsIndex] ?? "" : "";
+      const launchRaw = launchIndex >= 0 ? row[launchIndex] ?? "" : "";
       const documentRaw = documentIndex >= 0 ? row[documentIndex] ?? "" : "";
       const typeRaw = typeIndex >= 0 ? row[typeIndex] ?? "" : "";
+
+      const detailsTrimmed = detailsRaw.trim();
+      const launchTrimmed = launchRaw.trim();
+      const description = detailsTrimmed || launchTrimmed;
+      const extraDescription =
+        detailsTrimmed && launchTrimmed && detailsTrimmed !== launchTrimmed
+          ? launchTrimmed
+          : undefined;
+
+      const normalizedDesc = normalizeText(description || extraDescription || "");
+      if (
+        normalizedDesc === "saldo" ||
+        normalizedDesc === "saldo anterior" ||
+        normalizedDesc.startsWith("saldo ")
+      ) {
+        incrementSkipped(result);
+        addWarning(result, `Linha ${rowIndex}: saldo ignorado`);
+        return;
+      }
 
       const dateISO = parseDateToISO(dateRaw);
       const parsedAmount = parseMoneyToCents(amountRaw);
@@ -77,7 +98,8 @@ export class BbCsvParser implements IngestionParser {
         dateISO,
         amountCents: Math.abs(parsedAmount),
         type,
-        description: detailsRaw.trim() || undefined,
+        description: description || undefined,
+        extraDescription,
         documentNumber: documentRaw.trim() || undefined,
         rowIndex,
       });

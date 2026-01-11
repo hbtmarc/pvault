@@ -31,6 +31,7 @@ import {
 } from "./date";
 import { db } from "./firebase";
 import { getInstallmentAmount, splitCentsEven } from "./money";
+import { DEFAULT_CATEGORY_SEED } from "./categorizeTransaction";
 
 export type Direction = "income" | "expense";
 
@@ -50,13 +51,21 @@ export type Category = {
   archived: boolean;
 };
 
+export type MerchantCategoryRule = {
+  id: string;
+  merchantKey: string;
+  categoryId: string;
+};
+
 export type Transaction = {
   id: string;
   type: TransactionType;
+  kind?: Direction;
   paymentMethod: PaymentMethod;
   amountCents: number;
   date: string;
   monthKey: string;
+  invoiceMonthKey?: string;
   categoryId?: string;
   description?: string;
   name?: string;
@@ -71,11 +80,13 @@ export type Transaction = {
   installmentGroupId?: string;
   installmentIndex?: number;
   installmentCount?: number;
+  installmentTotal?: number;
   installmentPlanId?: string;
   installmentNumber?: number;
   installmentsTotal?: number;
   paidAt?: string;
   paidByStatementId?: string;
+  isProjected?: boolean;
   sourceType?: TransactionSourceType;
   sourceRuleId?: string;
   plannedDate?: string;
@@ -214,9 +225,11 @@ type CategoryInput = {
 
 type TransactionInput = {
   type: TransactionType;
+  kind?: Direction;
   paymentMethod: PaymentMethod;
   amountCents: number;
   date: string;
+  invoiceMonthKey?: string;
   categoryId?: string;
   description?: string;
   name?: string;
@@ -231,11 +244,13 @@ type TransactionInput = {
   installmentGroupId?: string;
   installmentIndex?: number;
   installmentCount?: number;
+  installmentTotal?: number;
   installmentPlanId?: string;
   installmentNumber?: number;
   installmentsTotal?: number;
   paidAt?: string;
   paidByStatementId?: string;
+  isProjected?: boolean;
   sourceType?: TransactionSourceType;
   sourceRuleId?: string;
   plannedDate?: string;
@@ -272,6 +287,9 @@ type InstallmentPlanInput = {
 const categoriesCollection = (uid: string) =>
   collection(db, "users", uid, "categories");
 
+const merchantCategoryRulesCollection = (uid: string) =>
+  collection(db, "users", uid, "merchantCategoryRules");
+
 const transactionsCollection = (uid: string) =>
   collection(db, "users", uid, "transactions");
 
@@ -304,12 +322,57 @@ const logDev = (message: string, details: Record<string, unknown>) => {
   }
 };
 
+const mapTransactionSnapshot = (
+  item: QueryDocumentSnapshot<DocumentData>
+): Transaction => {
+  const data = item.data();
+  const rawType =
+    (data.type as TransactionType) ?? (data.direction as Direction) ?? "expense";
+  const rawPaymentMethod =
+    (data.paymentMethod as PaymentMethod) ?? (data.cardId ? "card" : "cash");
+
+  return {
+    id: item.id,
+    type: rawType,
+    kind: (data.kind as Direction) ?? undefined,
+    paymentMethod: rawPaymentMethod,
+    amountCents: (data.amountCents as number) ?? 0,
+    date: (data.date as string) ?? "",
+    monthKey: (data.monthKey as string) ?? "",
+    invoiceMonthKey:
+      (data.invoiceMonthKey as string) ??
+      (data.statementMonthKey as string) ??
+      undefined,
+    categoryId: (data.categoryId as string) ?? "",
+    description: (data.description as string) ?? "",
+    name: (data.name as string) ?? "",
+    notes: (data.notes as string) ?? "",
+    paymentKind: (data.paymentKind as PaymentKind) ?? undefined,
+    cardId: (data.cardId as string) ?? undefined,
+    statementMonthKey: (data.statementMonthKey as string) ?? undefined,
+    installmentGroupId: (data.installmentGroupId as string) ?? undefined,
+    installmentIndex: (data.installmentIndex as number) ?? undefined,
+    installmentCount: (data.installmentCount as number) ?? undefined,
+    installmentTotal: (data.installmentTotal as number) ?? undefined,
+    installmentPlanId: (data.installmentPlanId as string) ?? undefined,
+    installmentNumber: (data.installmentNumber as number) ?? undefined,
+    installmentsTotal: (data.installmentsTotal as number) ?? undefined,
+    paidAt: (data.paidAt as string) ?? undefined,
+    paidByStatementId: (data.paidByStatementId as string) ?? undefined,
+    isProjected: (data.isProjected as boolean) ?? undefined,
+    sourceType: data.sourceType as TransactionSourceType | undefined,
+    sourceRuleId: (data.sourceRuleId as string) ?? undefined,
+    plannedDate: (data.plannedDate as string) ?? undefined,
+  };
+};
+
 const BACKUP_SCHEMA_VERSION = 1;
 const READ_PAGE_SIZE = 400;
 const WRITE_BATCH_SIZE = 450;
 
 const ADMIN_COLLECTIONS = [
   "categories",
+  "merchantCategoryRules",
   "transactions",
   "budgets",
   "recurringRules",
@@ -417,6 +480,98 @@ export const archiveCategory = async (
     });
   } catch (error) {
     console.error("[firestore] archiveCategory", { uid, path, archived, error });
+    throw error;
+  }
+};
+
+export const seedDefaultCategories = async (uid: string) => {
+  ensureUid(uid);
+  const path = `users/${uid}/categories`;
+  const batch = writeBatch(db);
+
+  DEFAULT_CATEGORY_SEED.forEach((category) => {
+    const ref = doc(categoriesCollection(uid), category.id);
+    batch.set(
+      ref,
+      {
+        name: category.name.trim(),
+        type: category.type,
+        order: category.order,
+        archived: false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+  });
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    console.error("[firestore] seedDefaultCategories", { uid, path, error });
+    throw error;
+  }
+};
+
+export const listMerchantCategoryRules = (
+  uid: string,
+  onChange: (items: MerchantCategoryRule[]) => void,
+  onError?: (error: unknown) => void
+) => {
+  ensureUid(uid);
+  const path = `users/${uid}/merchantCategoryRules`;
+
+  logDev("[firestore] listMerchantCategoryRules", { uid, path });
+
+  const rulesQuery = query(merchantCategoryRulesCollection(uid));
+
+  return onSnapshot(
+    rulesQuery,
+    (snapshot) => {
+      const items = snapshot.docs.map((item) => {
+        const data = item.data();
+        return {
+          id: item.id,
+          merchantKey: item.id,
+          categoryId: (data.categoryId as string) ?? "",
+        };
+      });
+      onChange(items);
+    },
+    (error) => {
+      console.error("[firestore] listMerchantCategoryRules", { uid, path, error });
+      onError?.(error);
+    }
+  );
+};
+
+export const upsertMerchantCategoryRule = async (
+  uid: string,
+  merchantKey: string,
+  categoryId: string
+) => {
+  ensureUid(uid);
+  const path = `users/${uid}/merchantCategoryRules/${merchantKey}`;
+  const payload = {
+    merchantKey,
+    categoryId,
+    updatedAt: serverTimestamp(),
+    createdAt: serverTimestamp(),
+  };
+
+  try {
+    return await setDoc(
+      doc(merchantCategoryRulesCollection(uid), merchantKey),
+      payload,
+      { merge: true }
+    );
+  } catch (error) {
+    console.error("[firestore] upsertMerchantCategoryRule", {
+      uid,
+      path,
+      merchantKey,
+      error,
+    });
     throw error;
   }
 };
@@ -547,43 +702,7 @@ export const listTransactionsByMonth = (
   return onSnapshot(
     transactionsQuery,
     (snapshot) => {
-      const items = snapshot.docs.map((item) => {
-        const data = item.data();
-        const rawType =
-          (data.type as TransactionType) ??
-          (data.direction as Direction) ??
-          "expense";
-        const rawPaymentMethod =
-          (data.paymentMethod as PaymentMethod) ??
-          (data.cardId ? "card" : "cash");
-
-        return {
-          id: item.id,
-          type: rawType,
-          paymentMethod: rawPaymentMethod,
-          amountCents: (data.amountCents as number) ?? 0,
-          date: (data.date as string) ?? "",
-          monthKey: (data.monthKey as string) ?? "",
-          categoryId: (data.categoryId as string) ?? "",
-          description: (data.description as string) ?? "",
-          name: (data.name as string) ?? "",
-          notes: (data.notes as string) ?? "",
-          paymentKind: (data.paymentKind as PaymentKind) ?? undefined,
-          cardId: (data.cardId as string) ?? undefined,
-          statementMonthKey: (data.statementMonthKey as string) ?? undefined,
-          installmentGroupId: (data.installmentGroupId as string) ?? undefined,
-          installmentIndex: (data.installmentIndex as number) ?? undefined,
-          installmentCount: (data.installmentCount as number) ?? undefined,
-          installmentPlanId: (data.installmentPlanId as string) ?? undefined,
-          installmentNumber: (data.installmentNumber as number) ?? undefined,
-          installmentsTotal: (data.installmentsTotal as number) ?? undefined,
-          paidAt: (data.paidAt as string) ?? undefined,
-          paidByStatementId: (data.paidByStatementId as string) ?? undefined,
-          sourceType: data.sourceType as TransactionSourceType | undefined,
-          sourceRuleId: (data.sourceRuleId as string) ?? undefined,
-          plannedDate: (data.plannedDate as string) ?? undefined,
-        };
-      });
+      const items = snapshot.docs.map(mapTransactionSnapshot);
 
       onChange(items);
     },
@@ -613,6 +732,12 @@ export const createTransaction = async (uid: string, data: TransactionInput) => 
     updatedAt: serverTimestamp(),
   };
 
+  const resolvedKind =
+    data.kind ?? (data.type === "income" || data.type === "expense" ? data.type : undefined);
+  if (resolvedKind) {
+    payload.kind = resolvedKind;
+  }
+
   if (data.name) {
     payload.name = data.name.trim();
   }
@@ -631,6 +756,9 @@ export const createTransaction = async (uid: string, data: TransactionInput) => 
   if (data.installmentCount) {
     payload.installmentCount = data.installmentCount;
   }
+  if (data.installmentTotal) {
+    payload.installmentTotal = data.installmentTotal;
+  }
   if (data.categoryId) {
     payload.categoryId = data.categoryId;
   }
@@ -639,6 +767,11 @@ export const createTransaction = async (uid: string, data: TransactionInput) => 
   }
   if (data.statementMonthKey) {
     payload.statementMonthKey = data.statementMonthKey;
+  }
+  if (data.invoiceMonthKey) {
+    payload.invoiceMonthKey = data.invoiceMonthKey;
+  } else if (data.statementMonthKey) {
+    payload.invoiceMonthKey = data.statementMonthKey;
   }
   if (data.paidAt) {
     payload.paidAt = data.paidAt;
@@ -654,6 +787,9 @@ export const createTransaction = async (uid: string, data: TransactionInput) => 
   }
   if (data.installmentsTotal) {
     payload.installmentsTotal = data.installmentsTotal;
+  }
+  if (data.isProjected !== undefined) {
+    payload.isProjected = data.isProjected;
   }
   if (data.sourceType) {
     payload.sourceType = data.sourceType;
@@ -690,6 +826,10 @@ export const updateTransaction = async (
     updatedAt: serverTimestamp(),
   };
 
+  const resolvedKind =
+    data.kind ?? (data.type === "income" || data.type === "expense" ? data.type : undefined);
+  payload.kind = resolvedKind ? resolvedKind : deleteField();
+
   if (data.name !== undefined) {
     payload.name = data.name ? data.name.trim() : deleteField();
   }
@@ -712,6 +852,10 @@ export const updateTransaction = async (
     payload.installmentCount =
       data.installmentCount !== undefined ? data.installmentCount : deleteField();
   }
+  if (data.installmentTotal !== undefined) {
+    payload.installmentTotal =
+      data.installmentTotal !== undefined ? data.installmentTotal : deleteField();
+  }
   if (data.categoryId) {
     payload.categoryId = data.categoryId;
   } else {
@@ -726,6 +870,15 @@ export const updateTransaction = async (
     payload.statementMonthKey = data.statementMonthKey;
   } else {
     payload.statementMonthKey = deleteField();
+  }
+  if (data.invoiceMonthKey !== undefined) {
+    payload.invoiceMonthKey = data.invoiceMonthKey
+      ? data.invoiceMonthKey
+      : deleteField();
+  } else if (data.statementMonthKey !== undefined) {
+    payload.invoiceMonthKey = data.statementMonthKey
+      ? data.statementMonthKey
+      : deleteField();
   }
   if (data.paidAt !== undefined) {
     payload.paidAt = data.paidAt ? data.paidAt : deleteField();
@@ -749,6 +902,9 @@ export const updateTransaction = async (
     payload.installmentsTotal = data.installmentsTotal;
   } else {
     payload.installmentsTotal = deleteField();
+  }
+  if (data.isProjected !== undefined) {
+    payload.isProjected = data.isProjected;
   }
   if (data.sourceType) {
     payload.sourceType = data.sourceType;
@@ -800,7 +956,15 @@ export const listCardTransactionsByStatement = (
     statementMonthKey,
   });
 
-  const statementQuery = query(
+  const invoiceQuery = query(
+    transactionsCollection(uid),
+    where("cardId", "==", cardId),
+    where("invoiceMonthKey", "==", statementMonthKey),
+    where("paymentMethod", "==", "card"),
+    orderBy("date", "desc")
+  );
+
+  const legacyQuery = query(
     transactionsCollection(uid),
     where("cardId", "==", cardId),
     where("statementMonthKey", "==", statementMonthKey),
@@ -808,61 +972,56 @@ export const listCardTransactionsByStatement = (
     orderBy("date", "desc")
   );
 
-  return onSnapshot(
-    statementQuery,
+  let invoiceItems: Transaction[] = [];
+  let legacyItems: Transaction[] = [];
+
+  const mergeAndNotify = () => {
+    const merged = new Map<string, Transaction>();
+    invoiceItems.forEach((item) => merged.set(item.id, item));
+    legacyItems.forEach((item) => {
+      if (!merged.has(item.id)) {
+        merged.set(item.id, item);
+      }
+    });
+    const items = Array.from(merged.values()).sort((a, b) =>
+      b.date.localeCompare(a.date)
+    );
+    onChange(items);
+  };
+
+  const handleError = (error: unknown) => {
+    console.error("[firestore] listCardTransactionsByStatement", {
+      uid,
+      path,
+      cardId,
+      statementMonthKey,
+      error,
+    });
+    onError?.(error);
+  };
+
+  const unsubscribeInvoice = onSnapshot(
+    invoiceQuery,
     (snapshot) => {
-      const items = snapshot.docs
-        .map((item) => {
-          const data = item.data();
-          const rawType =
-            (data.type as TransactionType) ??
-            (data.direction as Direction) ??
-            "expense";
-          const rawPaymentMethod =
-            (data.paymentMethod as PaymentMethod) ??
-            (data.cardId ? "card" : "cash");
-
-          return {
-            id: item.id,
-            type: rawType,
-            paymentMethod: rawPaymentMethod,
-            amountCents: (data.amountCents as number) ?? 0,
-            date: (data.date as string) ?? "",
-            monthKey: (data.monthKey as string) ?? "",
-            categoryId: (data.categoryId as string) ?? "",
-            description: (data.description as string) ?? "",
-            name: (data.name as string) ?? "",
-            notes: (data.notes as string) ?? "",
-            paymentKind: (data.paymentKind as PaymentKind) ?? undefined,
-            cardId: (data.cardId as string) ?? undefined,
-            statementMonthKey: (data.statementMonthKey as string) ?? undefined,
-            installmentGroupId: (data.installmentGroupId as string) ?? undefined,
-            installmentIndex: (data.installmentIndex as number) ?? undefined,
-            installmentCount: (data.installmentCount as number) ?? undefined,
-            installmentPlanId: (data.installmentPlanId as string) ?? undefined,
-            installmentNumber: (data.installmentNumber as number) ?? undefined,
-            installmentsTotal: (data.installmentsTotal as number) ?? undefined,
-            paidAt: (data.paidAt as string) ?? undefined,
-            paidByStatementId: (data.paidByStatementId as string) ?? undefined,
-            sourceType: data.sourceType as TransactionSourceType | undefined,
-            sourceRuleId: (data.sourceRuleId as string) ?? undefined,
-            plannedDate: (data.plannedDate as string) ?? undefined,
-          };
-        });
-
-      onChange(items);
+      invoiceItems = snapshot.docs.map(mapTransactionSnapshot);
+      mergeAndNotify();
     },
-    (error) => {
-      console.error("[firestore] listCardTransactionsByStatement", {
-        uid,
-        path,
-        cardId,
-        statementMonthKey,
-        error,
-      });
-      onError?.(error);
-    }
+    handleError
   );
+
+  const unsubscribeLegacy = onSnapshot(
+    legacyQuery,
+    (snapshot) => {
+      legacyItems = snapshot.docs.map(mapTransactionSnapshot);
+      mergeAndNotify();
+    },
+    handleError
+  );
+
+  return () => {
+    unsubscribeInvoice();
+    unsubscribeLegacy();
+  };
 };
 
 export const listCardTransactionsByStatementMonth = (
@@ -880,65 +1039,99 @@ export const listCardTransactionsByStatementMonth = (
     statementMonthKey,
   });
 
-  const statementQuery = query(
+  const invoiceQuery = query(
+    transactionsCollection(uid),
+    where("invoiceMonthKey", "==", statementMonthKey),
+    where("paymentMethod", "==", "card")
+  );
+
+  const legacyQuery = query(
     transactionsCollection(uid),
     where("statementMonthKey", "==", statementMonthKey),
     where("paymentMethod", "==", "card")
   );
 
-  return onSnapshot(
-    statementQuery,
+  let invoiceItems: Transaction[] = [];
+  let legacyItems: Transaction[] = [];
+
+  const mergeAndNotify = () => {
+    const merged = new Map<string, Transaction>();
+    invoiceItems.forEach((item) => merged.set(item.id, item));
+    legacyItems.forEach((item) => {
+      if (!merged.has(item.id)) {
+        merged.set(item.id, item);
+      }
+    });
+    onChange(Array.from(merged.values()));
+  };
+
+  const handleError = (error: unknown) => {
+    console.error("[firestore] listCardTransactionsByStatementMonth", {
+      uid,
+      path,
+      statementMonthKey,
+      error,
+    });
+    onError?.(error);
+  };
+
+  const unsubscribeInvoice = onSnapshot(
+    invoiceQuery,
     (snapshot) => {
-      const items = snapshot.docs.map((item) => {
-        const data = item.data();
-        const rawType =
-          (data.type as TransactionType) ??
-          (data.direction as Direction) ??
-          "expense";
-        const rawPaymentMethod =
-          (data.paymentMethod as PaymentMethod) ??
-          (data.cardId ? "card" : "cash");
-
-        return {
-          id: item.id,
-          type: rawType,
-          paymentMethod: rawPaymentMethod,
-          amountCents: (data.amountCents as number) ?? 0,
-          date: (data.date as string) ?? "",
-          monthKey: (data.monthKey as string) ?? "",
-          categoryId: (data.categoryId as string) ?? "",
-          description: (data.description as string) ?? "",
-          name: (data.name as string) ?? "",
-          notes: (data.notes as string) ?? "",
-          paymentKind: (data.paymentKind as PaymentKind) ?? undefined,
-          cardId: (data.cardId as string) ?? undefined,
-          statementMonthKey: (data.statementMonthKey as string) ?? undefined,
-          installmentGroupId: (data.installmentGroupId as string) ?? undefined,
-          installmentIndex: (data.installmentIndex as number) ?? undefined,
-          installmentCount: (data.installmentCount as number) ?? undefined,
-          installmentPlanId: (data.installmentPlanId as string) ?? undefined,
-          installmentNumber: (data.installmentNumber as number) ?? undefined,
-          installmentsTotal: (data.installmentsTotal as number) ?? undefined,
-          paidAt: (data.paidAt as string) ?? undefined,
-          paidByStatementId: (data.paidByStatementId as string) ?? undefined,
-          sourceType: data.sourceType as TransactionSourceType | undefined,
-          sourceRuleId: (data.sourceRuleId as string) ?? undefined,
-          plannedDate: (data.plannedDate as string) ?? undefined,
-        };
-      });
-
-      onChange(items);
+      invoiceItems = snapshot.docs.map(mapTransactionSnapshot);
+      mergeAndNotify();
     },
-    (error) => {
-      console.error("[firestore] listCardTransactionsByStatementMonth", {
-        uid,
-        path,
-        statementMonthKey,
-        error,
-      });
-      onError?.(error);
-    }
+    handleError
   );
+
+  const unsubscribeLegacy = onSnapshot(
+    legacyQuery,
+    (snapshot) => {
+      legacyItems = snapshot.docs.map(mapTransactionSnapshot);
+      mergeAndNotify();
+    },
+    handleError
+  );
+
+  return () => {
+    unsubscribeInvoice();
+    unsubscribeLegacy();
+  };
+};
+
+const fetchStatementTransactionDocs = async (
+  uid: string,
+  cardId: string,
+  statementMonthKey: string
+) => {
+  const invoiceQuery = query(
+    transactionsCollection(uid),
+    where("cardId", "==", cardId),
+    where("invoiceMonthKey", "==", statementMonthKey),
+    where("paymentMethod", "==", "card")
+  );
+
+  const legacyQuery = query(
+    transactionsCollection(uid),
+    where("cardId", "==", cardId),
+    where("statementMonthKey", "==", statementMonthKey),
+    where("paymentMethod", "==", "card")
+  );
+
+  const [invoiceSnap, legacySnap] = await Promise.all([
+    getDocs(invoiceQuery),
+    getDocs(legacyQuery),
+  ]);
+
+  const merged = new Map<string, QueryDocumentSnapshot<DocumentData>>();
+  invoiceSnap.docs.forEach((docSnap) => merged.set(docSnap.id, docSnap));
+  legacySnap.docs.forEach((docSnap) => {
+    if (!merged.has(docSnap.id)) {
+      merged.set(docSnap.id, docSnap);
+    }
+  });
+
+  return Array.from(merged.values());
 };
 
 export const fetchStatementTotal = async (
@@ -951,15 +1144,8 @@ export const fetchStatementTotal = async (
 
   logDev("[firestore] fetchStatementTotal", { uid, path, cardId, statementMonthKey });
 
-  const statementQuery = query(
-    transactionsCollection(uid),
-    where("cardId", "==", cardId),
-    where("statementMonthKey", "==", statementMonthKey),
-    where("paymentMethod", "==", "card")
-  );
-
-  const snapshot = await getDocs(statementQuery);
-  return snapshot.docs.reduce((sum, item) => {
+  const docs = await fetchStatementTransactionDocs(uid, cardId, statementMonthKey);
+  return docs.reduce((sum, item) => {
     const data = item.data();
     const rawType =
       (data.type as TransactionType) ??
@@ -1010,6 +1196,7 @@ export const createCardExpenseWithInstallments = async (
 
     batch.set(ref, {
       type: "expense",
+      kind: "expense",
       paymentMethod: "card",
       amountCents: amounts[index] ?? 0,
       date: installmentDate,
@@ -1018,9 +1205,11 @@ export const createCardExpenseWithInstallments = async (
       description: base.description?.trim() || "",
       cardId: card.id,
       statementMonthKey,
+      invoiceMonthKey: statementMonthKey,
       installmentGroupId: groupId,
       installmentIndex,
       installmentCount: installmentsCount,
+      installmentTotal: installmentsCount,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -1039,15 +1228,7 @@ export const markStatementItemsPaid = async (
 ) => {
   ensureUid(uid);
   const path = `users/${uid}/transactions`;
-  const statementQuery = query(
-    transactionsCollection(uid),
-    where("cardId", "==", cardId),
-    where("statementMonthKey", "==", statementMonthKey),
-    where("paymentMethod", "==", "card")
-  );
-
-  const snapshot = await getDocs(statementQuery);
-  const docs = snapshot.docs;
+  const docs = await fetchStatementTransactionDocs(uid, cardId, statementMonthKey);
   const chunkSize = 300;
 
   logDev("[firestore] markStatementItemsPaid", {
@@ -1081,15 +1262,7 @@ export const clearStatementItemsPaid = async (
 ) => {
   ensureUid(uid);
   const path = `users/${uid}/transactions`;
-  const statementQuery = query(
-    transactionsCollection(uid),
-    where("cardId", "==", cardId),
-    where("statementMonthKey", "==", statementMonthKey),
-    where("paymentMethod", "==", "card")
-  );
-
-  const snapshot = await getDocs(statementQuery);
-  const docs = snapshot.docs;
+  const docs = await fetchStatementTransactionDocs(uid, cardId, statementMonthKey);
   const chunkSize = 300;
 
   logDev("[firestore] clearStatementItemsPaid", {
